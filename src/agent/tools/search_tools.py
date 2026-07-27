@@ -5,6 +5,10 @@ Search tools — wraps SearchService methods as agent-callable tools.
 Tools:
 - search_stock_news: search latest stock news
 - search_comprehensive_intel: multi-dimensional intelligence search
+- search_google_news: Google News search with article content extraction,
+  via the standalone newsgrab project's collector-service (HTTP only,
+  no in-process import of collection code). Disabled unless
+  GOOGLE_NEWS_COLLECTOR_URL is configured.
 """
 
 import logging
@@ -220,7 +224,92 @@ search_comprehensive_intel_tool = ToolDefinition(
 )
 
 
+# ============================================================
+# search_google_news
+# ============================================================
+
+def _handle_search_google_news(stock_code: str, stock_name: str) -> dict:
+    """Search Google News via the newsgrab collector-service (HTTP), with
+    article content extraction. Not part of SearchService's provider
+    rotation -- called only when the LLM explicitly invokes this tool."""
+    from src.services import google_news_collector_client
+
+    if not google_news_collector_client.is_enabled():
+        return {
+            "error": "Google News collector is disabled "
+                     "(set GOOGLE_NEWS_COLLECTOR_URL to enable)"
+        }
+
+    query = f"{stock_name} {stock_code}".strip()
+    try:
+        response = google_news_collector_client.collect_google_news(
+            query, max_results=5, days=7
+        )
+    except Exception as exc:
+        logger.warning("Google News collection failed for %s: %s", stock_code, exc)
+        return {"query": query, "success": False, "error": str(exc)}
+
+    if not response.success:
+        return {
+            "query": response.query,
+            "success": False,
+            "error": response.error_message,
+        }
+
+    _persist_news_response(
+        stock_code=stock_code,
+        stock_name=stock_name,
+        dimension="latest_news",
+        response=response,
+    )
+
+    return {
+        "query": response.query,
+        "provider": response.provider,
+        "success": True,
+        "results_count": len(response.results),
+        "results": [
+            {
+                "title": r.title,
+                "snippet": r.snippet,
+                "url": r.url,
+                "source": r.source,
+                "published_date": r.published_date,
+            }
+            for r in response.results
+        ],
+    }
+
+
+search_google_news_tool = ToolDefinition(
+    name="search_google_news",
+    description="Search Google News for a stock with article content extraction "
+                "via a self-hosted collector service (newsgrab). Slower than other "
+                "search tools (may take up to ~40s) because it resolves Google News "
+                "redirect links and parses article content through an async job. "
+                "Only available when GOOGLE_NEWS_COLLECTOR_URL is configured -- check "
+                "for an 'error' key indicating it is disabled before relying on it. "
+                "Use when other search tools return thin results.",
+    parameters=[
+        ToolParameter(
+            name="stock_code",
+            type="string",
+            description="Stock code, e.g., '600519'",
+        ),
+        ToolParameter(
+            name="stock_name",
+            type="string",
+            description="Stock name in Chinese, e.g., '贵州茅台'",
+        ),
+    ],
+    handler=_handle_search_google_news,
+    category="search",
+    policy=_NEWS_READ_POLICY,
+)
+
+
 ALL_SEARCH_TOOLS = [
     search_stock_news_tool,
     search_comprehensive_intel_tool,
+    search_google_news_tool,
 ]
