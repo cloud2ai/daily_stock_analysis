@@ -1093,5 +1093,22 @@ class TestStorage(unittest.TestCase):
             temp_dir.cleanup()
             DatabaseManager.reset_instance()
 
+    def test_parse_published_date_accepts_rfc822_format(self):
+        # Google News (via search_google_news / collector-service) returns
+        # published_date as RFC 822/2822, e.g. "Fri, 24 Jul 2026 12:00:53 GMT".
+        parsed = DatabaseManager._parse_published_date("Fri, 24 Jul 2026 12:00:53 GMT")
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.year, 2026)
+        self.assertEqual(parsed.month, 7)
+        self.assertEqual(parsed.day, 24)
+        self.assertEqual(parsed.hour, 12)
+        self.assertEqual(parsed.minute, 0)
+        self.assertEqual(parsed.second, 53)
+
+    def test_parse_published_date_rejects_garbage_without_raising(self):
+        self.assertIsNone(DatabaseManager._parse_published_date("not a date"))
+        self.assertIsNone(DatabaseManager._parse_published_date(""))
+        self.assertIsNone(DatabaseManager._parse_published_date(None))
+
 if __name__ == '__main__':
     unittest.main()
