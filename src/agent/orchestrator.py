@@ -369,11 +369,14 @@ class AgentOrchestrator:
                     "signal": op.signal,
                     "confidence": op.confidence,
                     "reasoning": op.reasoning,
-                    # DecisionAgent's own opinion sets raw_data=dashboard (see
-                    # decision_agent.py), so op.raw_data can be this same dict
-                    # being mutated right now. Storing it verbatim would create
-                    # a self-referencing structure that json.dumps/deepcopy
-                    # cannot handle downstream (API responses, report builders).
+                    # When a risk override is applied, _finalize_dashboard_payload
+                    # reassigns the decision opinion's raw_data to the same
+                    # `payload` dict that becomes this dashboard (see the
+                    # `if risk_applied:` block there), so op.raw_data can alias
+                    # the dashboard being mutated right now. Storing it verbatim
+                    # would create a self-referencing structure that
+                    # json.dumps/deepcopy cannot handle downstream (API
+                    # responses, report builders).
                     "raw_data": {} if op.raw_data is dashboard else op.raw_data,
                 }
                 for op in ctx.opinions
