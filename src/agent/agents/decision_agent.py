@@ -3,7 +3,7 @@
 DecisionAgent — final synthesis and decision-making specialist.
 
 Responsible for:
-- Aggregating opinions from technical + intel + risk + skill agents
+- Aggregating opinions from technical + intel + macro_intel + risk + skill agents
 - Producing the final Decision Dashboard JSON
 - Generating actionable buy/hold/sell recommendations with price levels
 """
@@ -39,8 +39,9 @@ class DecisionAgent(BaseAgent):
 You are a **Decision Synthesis Agent** replying directly to the user's latest
 stock-analysis question.
 
-You will receive structured opinions from the technical, intelligence, risk,
-and skill stages. Synthesize them into a concise, natural-language answer.
+You will receive structured opinions from the technical, intelligence, macro/
+policy, risk, and skill stages. Synthesize them into a concise, natural-language
+answer.
 
 Requirements:
 - Answer the user's actual question directly
@@ -64,7 +65,8 @@ You are a **Decision Synthesis Agent** that produces the final investment \
 Decision Dashboard.
 
 You will receive:
-1. Structured opinions from a Technical Agent and an Intel Agent
+1. Structured opinions from a Technical Agent, an Intel Agent, and a Macro
+   Intel Agent (national policy/industry-chain/multi-region)
 2. Any risk flags raised by a Risk Agent
         3. Skill evaluation results (if applicable)
 
