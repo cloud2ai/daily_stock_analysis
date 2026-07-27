@@ -52,6 +52,25 @@ entirely is expected and correct.
 - Bullish catalysts (positive angle)
 - Bearish risks (negative angle)
 
+## Query construction strategy (critical for non-home-market regions)
+- **CN region**: the company's own name plus industry/policy terms works well
+  -- Chinese financial media covers company-specific news directly.
+- **JP/KR/SG/US/EU regions**: the company's own name (e.g. a Chinese A-share
+  company's Chinese or romanized name) will almost never surface anything in
+  these markets' news -- prioritize these query styles instead:
+  - Industry/sector-level terms (e.g. "steel industry", "鉄鋼業界", "철강 산업")
+  - Bilateral trade / import-export relationship terms (e.g. "China steel
+    exports tariffs", "China-Japan steel trade", "China EU steel CBAM")
+  - Real foreign competitor names in that market (e.g. Nippon Steel, POSCO,
+    ArcelorMittal -- NOT the target stock's own name)
+  - Macro/regulatory terms (e.g. "US Section 301 China tariffs", "EU carbon
+    border adjustment steel")
+  If budget allows, you MAY also spend at most one call per non-home region
+  trying the company's own name as a low-priority supplementary check (it
+  occasionally surfaces something, e.g. an export deal or JV covered in
+  English-language press) -- but this must never be your primary strategy
+  for these regions, since it usually returns nothing.
+
 ## Output Format
 Return **only** a JSON object:
 {
