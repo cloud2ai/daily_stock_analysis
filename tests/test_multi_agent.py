@@ -927,6 +927,55 @@ class TestIntelAgentPostProcess(unittest.TestCase):
         self.assertEqual(ctx.risk_flags[0]["description"], "股东减持")
 
 
+class TestMacroIntelAgentPostProcess(unittest.TestCase):
+    """Test MacroIntelAgent JSON parsing and opinion construction."""
+
+    def test_parses_json_into_agent_opinion(self):
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
+
+        agent = MacroIntelAgent(tool_registry=MagicMock(), llm_adapter=MagicMock())
+        ctx = AgentContext(query="test", stock_code="600019")
+        raw = """```json
+        {
+          "signal": "buy",
+          "confidence": 0.65,
+          "reasoning": "中日韩产业链政策整体偏正面，未见重大风险",
+          "regions_covered": ["CN", "JP", "KR"],
+          "policy_notes": ["中国钢铁行业去产能政策延续"],
+          "industry_chain_notes": ["日韩上游原材料价格企稳"],
+          "bullish_points": ["政策支持"],
+          "bearish_points": []
+        }
+        ```"""
+
+        opinion = agent.post_process(ctx, raw)
+
+        self.assertIsNotNone(opinion)
+        self.assertEqual(opinion.agent_name, "macro_intel")
+        self.assertEqual(opinion.signal, "buy")
+        self.assertAlmostEqual(opinion.confidence, 0.65)
+        self.assertEqual(ctx.get_data("macro_intel_opinion")["regions_covered"], ["CN", "JP", "KR"])
+
+    def test_returns_none_on_unparseable_json(self):
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
+
+        agent = MacroIntelAgent(tool_registry=MagicMock(), llm_adapter=MagicMock())
+        ctx = AgentContext(query="test", stock_code="600019")
+
+        opinion = agent.post_process(ctx, "not valid json at all")
+
+        self.assertIsNone(opinion)
+
+    def test_agent_configuration(self):
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
+
+        agent = MacroIntelAgent(tool_registry=MagicMock(), llm_adapter=MagicMock())
+
+        self.assertEqual(agent.agent_name, "macro_intel")
+        self.assertEqual(agent.max_steps, 6)
+        self.assertEqual(agent.tool_names, ["search_macro_news"])
+
+
 # ============================================================
 # AgentOrchestrator (with mocked sub-agents)
 # ============================================================
