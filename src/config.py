@@ -853,6 +853,7 @@ class Config:
     agent_technical_agent_timeout_s: float = 0
     agent_intel_agent_timeout_s: float = 0
     agent_risk_agent_timeout_s: float = 0
+    agent_macro_intel_agent_timeout_s: float = 0
     agent_decision_agent_timeout_s: float = 0
     agent_portfolio_agent_timeout_s: float = 0
     agent_skill_agent_timeout_s: float = 0
@@ -1775,6 +1776,10 @@ class Config:
             agent_risk_agent_timeout_s=parse_env_float(
                 os.getenv('AGENT_RISK_AGENT_TIMEOUT_S'), 0,
                 field_name='AGENT_RISK_AGENT_TIMEOUT_S', minimum=0,
+            ),
+            agent_macro_intel_agent_timeout_s=parse_env_float(
+                os.getenv('AGENT_MACRO_INTEL_AGENT_TIMEOUT_S'), 0,
+                field_name='AGENT_MACRO_INTEL_AGENT_TIMEOUT_S', minimum=0,
             ),
             agent_decision_agent_timeout_s=parse_env_float(
                 os.getenv('AGENT_DECISION_AGENT_TIMEOUT_S'), 0,

@@ -1012,7 +1012,7 @@ class TestOrchestratorModes(unittest.TestCase):
         ctx = AgentContext(query="test", stock_code="600519")
         chain = orch._build_agent_chain(ctx)
         names = [a.agent_name for a in chain]
-        self.assertEqual(names, ["technical", "intel", "risk", "decision"])
+        self.assertEqual(names, ["technical", "intel", "macro_intel", "risk", "decision"])
 
     def test_invalid_mode_falls_back_to_standard(self):
         orch = self._make_orchestrator("nonsense")
@@ -1025,21 +1025,27 @@ class TestOrchestratorModes(unittest.TestCase):
         high_limit_chain = orch._build_agent_chain(AgentContext(query="test", stock_code="600519"))
         self.assertEqual(
             {agent.agent_name: agent.max_steps for agent in high_limit_chain},
-            {"technical": 6, "intel": 4, "risk": 4, "decision": 3},
+            {"technical": 6, "intel": 4, "macro_intel": 6, "risk": 4, "decision": 3},
         )
 
         orch.max_steps = 5
         low_limit_chain = orch._build_agent_chain(AgentContext(query="test", stock_code="600519"))
         self.assertEqual(
             {agent.agent_name: agent.max_steps for agent in low_limit_chain},
-            {"technical": 5, "intel": 4, "risk": 4, "decision": 3},
+            {"technical": 5, "intel": 4, "macro_intel": 5, "risk": 4, "decision": 3},
         )
 
         orch.max_steps = AGENT_MAX_STEPS_DEFAULT + 2
         raised_limit_chain = orch._build_agent_chain(AgentContext(query="test", stock_code="600519"))
         self.assertEqual(
             {agent.agent_name: agent.max_steps for agent in raised_limit_chain},
-            {"technical": AGENT_MAX_STEPS_DEFAULT + 2, "intel": AGENT_MAX_STEPS_DEFAULT + 2, "risk": AGENT_MAX_STEPS_DEFAULT + 2, "decision": AGENT_MAX_STEPS_DEFAULT + 2},
+            {
+                "technical": AGENT_MAX_STEPS_DEFAULT + 2,
+                "intel": AGENT_MAX_STEPS_DEFAULT + 2,
+                "macro_intel": AGENT_MAX_STEPS_DEFAULT + 2,
+                "risk": AGENT_MAX_STEPS_DEFAULT + 2,
+                "decision": AGENT_MAX_STEPS_DEFAULT + 2,
+            },
         )
 
     def test_prepare_agent_raised_limit_overrides_low_default_agent(self):

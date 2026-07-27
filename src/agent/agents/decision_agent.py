@@ -79,9 +79,10 @@ Your task: synthesise all inputs into a single, actionable Decision Dashboard.
    the overall signal must be downgraded accordingly.
 
 ## Signal Weighting Guidelines
-- Technical opinion weight: ~40%
-- Intel / sentiment weight: ~30%
-- Risk flags weight: ~30% (negative override: any high-severity risk caps signal at "hold")
+- Technical opinion weight: ~35%
+- Intel / sentiment weight (company news, capital flow): ~20%
+- Macro / policy weight (national policy, industry chain, multi-region): ~20%
+- Risk flags weight: ~25% (negative override: any high-severity risk caps signal at "hold")
 - If a skill opinion is present, blend it at 20% weight (reducing others proportionally)
 
 ## Scoring

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 新增 `MacroIntelAgent`，在 `full` 模式的多 Agent 分析流程中新增一个多地区（中日韩新美欧）宏观政策/产业链/正反面消息面专家，意见与技术面/个股消息面/风险一起交给 DecisionAgent 综合裁决（权重指导调整为技术35%/个股消息面20%/宏观20%/风险25%）；依赖新增的 `search_macro_news` 工具与已扩展的 `search_google_news` 采集链路（collector-service 支持按请求指定语言/地区）。
 - [新功能] 新增 `search_google_news` Agent 工具，通过独立 newsgrab 项目的 collector-service HTTP API 采集 Google News 全文，需配置 `GOOGLE_NEWS_COLLECTOR_URL` 才会启用，未配置时该工具自动禁用、不影响现有分析流程。
 - [chore] 暂停 PR Review 的自动触发，仅保留 `workflow_dispatch` 手动入口，避免辅助评审重复运行及评论权限失败产生误导性红灯；正式 CI 检查保持不变。
 - [新功能] Multi-Agent specialist 运行在分析历史保存成功后，按独立 skill 持久化版本化、低敏且幂等的有效 opinion 样本，为后续后验评估提供真实数据；本阶段不计算 outcome、不统计表现、不调整权重。
