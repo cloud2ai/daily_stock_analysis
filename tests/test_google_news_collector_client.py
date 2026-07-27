@@ -112,6 +112,54 @@ class CollectGoogleNewsTest(unittest.TestCase):
         self.assertEqual(article.source, "real-site.example")
         self.assertEqual(article.published_date, "2026-07-20")
 
+    def test_language_region_included_in_job_request_when_given(self):
+        from src.services import google_news_collector_client as client
+
+        submit_resp = _mock_response({"job_id": "job-lang"}, status_code=201)
+        poll_resp = _mock_response({
+            "job_id": "job-lang", "status": "done", "result": [], "error": None,
+        })
+
+        with patch(
+            "src.services.google_news_collector_client.requests.post",
+            return_value=submit_resp,
+        ) as mock_post, patch(
+            "src.services.google_news_collector_client.requests.get",
+            return_value=poll_resp,
+        ), patch(
+            "src.services.google_news_collector_client.time.sleep",
+            return_value=None,
+        ):
+            client.collect_google_news("鉄鋼業界", language="ja", region="JP")
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["params"]["language"] == "ja"
+        assert kwargs["json"]["params"]["region"] == "JP"
+
+    def test_language_region_omitted_from_job_request_when_not_given(self):
+        from src.services import google_news_collector_client as client
+
+        submit_resp = _mock_response({"job_id": "job-nolang"}, status_code=201)
+        poll_resp = _mock_response({
+            "job_id": "job-nolang", "status": "done", "result": [], "error": None,
+        })
+
+        with patch(
+            "src.services.google_news_collector_client.requests.post",
+            return_value=submit_resp,
+        ) as mock_post, patch(
+            "src.services.google_news_collector_client.requests.get",
+            return_value=poll_resp,
+        ), patch(
+            "src.services.google_news_collector_client.time.sleep",
+            return_value=None,
+        ):
+            client.collect_google_news("贵州茅台 600519")
+
+        _, kwargs = mock_post.call_args
+        assert "language" not in kwargs["json"]["params"]
+        assert "region" not in kwargs["json"]["params"]
+
     def test_job_failed_status_returns_failure_with_server_error(self):
         from src.services import google_news_collector_client as client
 

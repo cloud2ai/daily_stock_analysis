@@ -47,14 +47,18 @@ def _poll_budget_sec() -> float:
         return _DEFAULT_POLL_BUDGET_SEC
 
 
-def _submit_job(base_url: str, query: str, max_results: int, days: int) -> str:
+def _submit_job(
+    base_url: str, query: str, max_results: int, days: int,
+    language: Optional[str] = None, region: Optional[str] = None,
+) -> str:
+    params = {"max_results": max_results, "days": days}
+    if language is not None:
+        params["language"] = language
+    if region is not None:
+        params["region"] = region
     response = requests.post(
         urljoin(base_url + "/", "jobs"),
-        json={
-            "backend": "google_news",
-            "query": query,
-            "params": {"max_results": max_results, "days": days},
-        },
+        json={"backend": "google_news", "query": query, "params": params},
         timeout=_REQUEST_TIMEOUT_SEC,
     )
     response.raise_for_status()
@@ -75,9 +79,13 @@ def collect_google_news(
     max_results: int = 5,
     days: int = 7,
     timeout_sec: Optional[float] = None,
+    language: Optional[str] = None,
+    region: Optional[str] = None,
 ) -> SearchResponse:
     """Submit a google_news job to collector-service and poll until done/failed
-    or the poll budget is exhausted. Never raises.
+    or the poll budget is exhausted. Never raises. language/region, when given,
+    override the collector-service deployment's default for this call only (see
+    newsgrab's per-request language/region support).
     """
     start = time.monotonic()
 
@@ -93,7 +101,7 @@ def collect_google_news(
     deadline = start + budget
 
     try:
-        job_id = _submit_job(base_url, query, max_results, days)
+        job_id = _submit_job(base_url, query, max_results, days, language=language, region=region)
     except Exception as exc:
         logger.warning("[google_news_collector_client] collector-service unreachable: %s", exc)
         return SearchResponse(
