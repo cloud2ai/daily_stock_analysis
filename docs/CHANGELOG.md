@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 新增 `search_google_news` Agent 工具，通过独立 newsgrab 项目的 collector-service HTTP API 采集 Google News 全文，需配置 `GOOGLE_NEWS_COLLECTOR_URL` 才会启用，未配置时该工具自动禁用、不影响现有分析流程。
 - [chore] 暂停 PR Review 的自动触发，仅保留 `workflow_dispatch` 手动入口，避免辅助评审重复运行及评论权限失败产生误导性红灯；正式 CI 检查保持不变。
 - [新功能] Multi-Agent specialist 运行在分析历史保存成功后，按独立 skill 持久化版本化、低敏且幂等的有效 opinion 样本，为后续后验评估提供真实数据；本阶段不计算 outcome、不统计表现、不调整权重。
 - [新功能] AI 建议页在既有后验统计中增加决策风格历史表现，按每个分组独立的 30 个已完成样本门槛展示命中、区间涨跌、无法评估和最大不利波动，并保持旧统计接口兼容。
