@@ -361,10 +361,22 @@ class AgentOrchestrator:
         ctx.meta["response_mode"] = "dashboard"
         orch_result = self._execute_pipeline(ctx, parse_dashboard=True)
 
+        dashboard = orch_result.dashboard
+        if isinstance(dashboard, dict):
+            dashboard["agent_opinions"] = [
+                {
+                    "agent_name": op.agent_name,
+                    "signal": op.signal,
+                    "confidence": op.confidence,
+                    "reasoning": op.reasoning,
+                }
+                for op in ctx.opinions
+            ]
+
         return AgentResult(
             success=orch_result.success,
             content=orch_result.content,
-            dashboard=orch_result.dashboard,
+            dashboard=dashboard,
             tool_calls_log=orch_result.tool_calls_log,
             total_steps=orch_result.total_steps,
             total_tokens=orch_result.total_tokens,

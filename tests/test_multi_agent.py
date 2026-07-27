@@ -2195,6 +2195,50 @@ class TestOrchestratorExecution(unittest.TestCase):
         build_specialist_agents.assert_called_once()
         strategy.run.assert_called_once()
 
+    def test_run_serializes_ctx_opinions_into_dashboard_agent_opinions(self):
+        from src.agent.orchestrator import AgentOrchestrator
+        from src.agent.protocols import AgentOpinion
+
+        orch = AgentOrchestrator(
+            tool_registry=MagicMock(),
+            llm_adapter=MagicMock(),
+            mode="full",
+        )
+
+        fake_opinions = [
+            AgentOpinion(agent_name="technical", signal="buy", confidence=0.72, reasoning="MA金叉"),
+            AgentOpinion(agent_name="intel", signal="hold", confidence=0.55, reasoning="消息面中性"),
+            AgentOpinion(agent_name="macro_intel", signal="hold", confidence=0.60, reasoning="宏观缺乏强催化"),
+        ]
+
+        def fake_execute_pipeline(ctx, parse_dashboard=True):
+            from src.agent.orchestrator import OrchestratorResult
+            ctx.opinions.extend(fake_opinions)
+            return OrchestratorResult(
+                success=True,
+                content="{}",
+                dashboard={"core_conclusion": {"one_sentence": "test"}},
+                tool_calls_log=[],
+                total_steps=1,
+                total_tokens=0,
+                provider="test",
+                model="test",
+                error=None,
+                runtime_facts=None,
+            )
+
+        with patch.object(orch, "_execute_pipeline", side_effect=fake_execute_pipeline):
+            result = orch.run("analyze this stock", context={"stock_code": "600019", "stock_name": "宝钢股份"})
+
+        assert result.dashboard is not None
+        assert result.dashboard["agent_opinions"] == [
+            {"agent_name": "technical", "signal": "buy", "confidence": 0.72, "reasoning": "MA金叉"},
+            {"agent_name": "intel", "signal": "hold", "confidence": 0.55, "reasoning": "消息面中性"},
+            {"agent_name": "macro_intel", "signal": "hold", "confidence": 0.60, "reasoning": "宏观缺乏强催化"},
+        ]
+        # core_conclusion (an existing dashboard field) must survive untouched
+        assert result.dashboard["core_conclusion"]["one_sentence"] == "test"
+
 
 class TestDecisionAgentChatMode(unittest.TestCase):
     """Test DecisionAgent chat-mode output path."""
