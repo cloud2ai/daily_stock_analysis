@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { MultiAgentInsights } from '../MultiAgentInsights';
 import type { MultiAgentInsights as MultiAgentInsightsData } from '../../../types/analysis';
@@ -85,19 +85,34 @@ describe('MultiAgentInsights', () => {
 
     expect(screen.getByText('权重占比')).toBeInTheDocument();
 
-    const segments = container.querySelectorAll('[title$="%"]');
+    const bar = container.querySelector('.flex.h-2.w-full.overflow-hidden.rounded-full');
+    expect(bar).not.toBeNull();
+
+    const segments = Array.from(bar!.children) as HTMLElement[];
     expect(segments).toHaveLength(4);
 
-    const titles = Array.from(segments).map((segment) => segment.getAttribute('title'));
-    expect(titles).toEqual([
+    // Segment widths must be preserved on the outer wrapper even though the
+    // hover text now comes from the shared Tooltip component instead of a
+    // native title attribute.
+    const widths = segments.map((segment) => segment.style.width);
+    expect(widths).toEqual(['35%', '20%', '25%', '20%']);
+
+    const expectedTooltipLabels = [
       '技术面: 35%',
       '个股消息面: 20%',
       '风险面: 25%',
       '宏观政策: 20%',
-    ]);
+    ];
 
-    const widths = Array.from(segments).map((segment) => (segment as HTMLElement).style.width);
-    expect(widths).toEqual(['35%', '20%', '25%', '20%']);
+    segments.forEach((segment, index) => {
+      const trigger = segment.firstElementChild as HTMLElement;
+      expect(trigger).not.toBeNull();
+
+      fireEvent.mouseEnter(trigger);
+      expect(screen.getByText(expectedTooltipLabels[index])).toBeInTheDocument();
+      fireEvent.mouseLeave(trigger);
+      expect(screen.queryByText(expectedTooltipLabels[index])).not.toBeInTheDocument();
+    });
   });
 
   it('does not render the signal attribution bar when signalAttribution is absent', () => {

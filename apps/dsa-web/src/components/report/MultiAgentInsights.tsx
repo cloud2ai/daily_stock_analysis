@@ -1,6 +1,6 @@
 import type React from 'react';
 import type { MultiAgentInsights as MultiAgentInsightsData, ReportLanguage } from '../../types/analysis';
-import { Card } from '../common';
+import { Card, Tooltip } from '../common';
 import { DashboardPanelHeader } from '../dashboard';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 
@@ -85,11 +85,11 @@ export const MultiAgentInsights: React.FC<MultiAgentInsightsProps> = ({ insights
             {ATTRIBUTION_SEGMENTS.map((segment) => {
               const value = signalAttribution[segment.key] ?? 0;
               return (
-                <div
-                  key={segment.key}
-                  style={{ width: `${value}%`, backgroundColor: segment.color }}
-                  title={`${text[segment.labelKey]}: ${value}%`}
-                />
+                <div key={segment.key} style={{ width: `${value}%` }}>
+                  <Tooltip content={`${text[segment.labelKey]}: ${value}%`} className="h-full w-full">
+                    <div className="h-full w-full" style={{ backgroundColor: segment.color }} />
+                  </Tooltip>
+                </div>
               );
             })}
           </div>
