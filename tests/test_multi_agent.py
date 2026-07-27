@@ -2232,9 +2232,9 @@ class TestOrchestratorExecution(unittest.TestCase):
 
         assert result.dashboard is not None
         assert result.dashboard["agent_opinions"] == [
-            {"agent_name": "technical", "signal": "buy", "confidence": 0.72, "reasoning": "MA金叉"},
-            {"agent_name": "intel", "signal": "hold", "confidence": 0.55, "reasoning": "消息面中性"},
-            {"agent_name": "macro_intel", "signal": "hold", "confidence": 0.60, "reasoning": "宏观缺乏强催化"},
+            {"agent_name": "technical", "signal": "buy", "confidence": 0.72, "reasoning": "MA金叉", "raw_data": {}},
+            {"agent_name": "intel", "signal": "hold", "confidence": 0.55, "reasoning": "消息面中性", "raw_data": {}},
+            {"agent_name": "macro_intel", "signal": "hold", "confidence": 0.60, "reasoning": "宏观缺乏强催化", "raw_data": {}},
         ]
         # core_conclusion (an existing dashboard field) must survive untouched
         assert result.dashboard["core_conclusion"]["one_sentence"] == "test"

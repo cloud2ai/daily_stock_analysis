@@ -369,6 +369,7 @@ class AgentOrchestrator:
                     "signal": op.signal,
                     "confidence": op.confidence,
                     "reasoning": op.reasoning,
+                    "raw_data": op.raw_data,
                 }
                 for op in ctx.opinions
             ]
