@@ -2239,6 +2239,60 @@ class TestOrchestratorExecution(unittest.TestCase):
         # core_conclusion (an existing dashboard field) must survive untouched
         assert result.dashboard["core_conclusion"]["one_sentence"] == "test"
 
+    def test_run_breaks_self_reference_when_decision_opinion_raw_data_is_the_dashboard(self):
+        """Regression test: DecisionAgent.post_process sets raw_data=dashboard
+        (see decision_agent.py), so ctx.opinions can contain an opinion whose
+        raw_data IS the same dict object being mutated into
+        dashboard['agent_opinions']. Verified via a real end-to-end run that
+        this previously produced a circular reference json.dumps could not
+        serialize (ValueError: Circular reference detected)."""
+        import json
+
+        from src.agent.orchestrator import AgentOrchestrator
+        from src.agent.protocols import AgentOpinion
+
+        orch = AgentOrchestrator(
+            tool_registry=MagicMock(),
+            llm_adapter=MagicMock(),
+            mode="full",
+        )
+
+        shared_dashboard = {"core_conclusion": {"one_sentence": "test"}}
+
+        def fake_execute_pipeline(ctx, parse_dashboard=True):
+            from src.agent.orchestrator import OrchestratorResult
+            ctx.opinions.extend([
+                AgentOpinion(agent_name="technical", signal="buy", confidence=0.72, reasoning="MA金叉"),
+                AgentOpinion(
+                    agent_name="decision", signal="buy", confidence=0.8,
+                    reasoning="综合判断", raw_data=shared_dashboard,
+                ),
+            ])
+            return OrchestratorResult(
+                success=True,
+                content="{}",
+                dashboard=shared_dashboard,
+                tool_calls_log=[],
+                total_steps=1,
+                total_tokens=0,
+                provider="test",
+                model="test",
+                error=None,
+                runtime_facts=None,
+            )
+
+        with patch.object(orch, "_execute_pipeline", side_effect=fake_execute_pipeline):
+            result = orch.run("analyze this stock", context={"stock_code": "600019", "stock_name": "宝钢股份"})
+
+        # Must not raise "Circular reference detected".
+        json.dumps(result.dashboard, ensure_ascii=False)
+
+        opinions = result.dashboard["agent_opinions"]
+        assert opinions[0]["raw_data"] == {}  # technical: no raw_data set, unaffected
+        assert opinions[1]["agent_name"] == "decision"
+        assert opinions[1]["raw_data"] == {}  # decision: self-reference replaced with {}
+        assert result.dashboard["core_conclusion"]["one_sentence"] == "test"
+
 
 class TestDecisionAgentChatMode(unittest.TestCase):
     """Test DecisionAgent chat-mode output path."""
