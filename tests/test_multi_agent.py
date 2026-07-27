@@ -975,6 +975,20 @@ class TestMacroIntelAgentPostProcess(unittest.TestCase):
         self.assertEqual(agent.max_steps, 6)
         self.assertEqual(agent.tool_names, ["search_macro_news"])
 
+    def test_tool_names_resolve_against_the_real_production_registry(self):
+        """Regression guard for the wiring-gap bug class: tool_names is a
+        plain string list that must actually match a real registered tool
+        name, or _filtered_registry() fails soft (logs a warning, returns an
+        empty registry) and the agent silently runs with zero tools. Uses
+        the real factory-built registry, not a mock, so a future rename on
+        either side would be caught here."""
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
+        from src.agent.factory import get_tool_registry
+
+        agent = MacroIntelAgent(tool_registry=get_tool_registry(), llm_adapter=MagicMock())
+
+        self.assertEqual(agent._filtered_registry().list_names(), ["search_macro_news"])
+
 
 # ============================================================
 # AgentOrchestrator (with mocked sub-agents)
