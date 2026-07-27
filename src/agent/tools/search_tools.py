@@ -32,6 +32,11 @@ _INTEL_READ_POLICY = ToolPolicy.declared(
     permissions=["intel:read"],
     scope_dimensions=["stock"],
 )
+_MACRO_NEWS_READ_POLICY = ToolPolicy.declared(
+    read_only=True,
+    side_effects=["network_read"],
+    permissions=["news:read"],
+)
 
 
 def _get_db():
@@ -383,7 +388,7 @@ search_macro_news_tool = ToolDefinition(
     ],
     handler=_handle_search_macro_news,
     category="search",
-    policy=_NEWS_READ_POLICY,
+    policy=_MACRO_NEWS_READ_POLICY,
 )
 
 
