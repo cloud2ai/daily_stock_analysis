@@ -170,7 +170,18 @@ class AnalysisService:
         sniper_points = {}
         if hasattr(result, 'get_sniper_points'):
             sniper_points = result.get_sniper_points() or {}
-        
+
+        # 获取多 Agent 意见与看多看空聚合（缺失时优雅降级为空）
+        agent_opinions = []
+        if hasattr(result, 'get_agent_opinions'):
+            agent_opinions = result.get_agent_opinions() or []
+        bullish_bearish = {"bullish": [], "bearish": []}
+        if hasattr(result, 'get_bullish_bearish_points'):
+            bullish_bearish = result.get_bullish_bearish_points() or {"bullish": [], "bearish": []}
+        signal_attribution = None
+        if getattr(result, "dashboard", None):
+            signal_attribution = result.dashboard.get("signal_attribution")
+
         # 计算情绪标签
         report_language = normalize_report_language(getattr(result, "report_language", "zh"))
         sentiment_label = get_sentiment_label(result.sentiment_score, report_language)
@@ -239,7 +250,13 @@ class AnalysisService:
                 "technical_analysis": result.technical_analysis,
                 "fundamental_analysis": result.fundamental_analysis,
                 "risk_warning": result.risk_warning,
-            }
+            },
+            "multi_agent_insights": {
+                "opinions": agent_opinions,
+                "bullish_points": bullish_bearish.get("bullish", []),
+                "bearish_points": bullish_bearish.get("bearish", []),
+                "signal_attribution": signal_attribution,
+            },
         }
         if hasattr(result, "to_dict"):
             raw_result_payload = result.to_dict()
