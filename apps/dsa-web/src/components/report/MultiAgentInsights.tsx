@@ -18,6 +18,12 @@ const AGENT_LABEL_KEY: Record<string, AgentLabelKey> = {
   risk: 'agentLabelRisk',
 };
 
+/** 将 agentName / sourceAgent 转换为可读的多语言标签，找不到映射时回退为原始值 */
+const getAgentLabel = (agentName: string, text: Record<AgentLabelKey, string>): string => {
+  const labelKey = AGENT_LABEL_KEY[agentName];
+  return labelKey ? text[labelKey] : agentName;
+};
+
 interface AttributionSegment {
   key: keyof NonNullable<MultiAgentInsightsData['signalAttribution']>;
   labelKey: AgentLabelKey;
@@ -54,8 +60,7 @@ export const MultiAgentInsights: React.FC<MultiAgentInsightsProps> = ({ insights
       {opinions.length > 0 && (
         <div className="flex flex-col gap-1 mb-4">
           {opinions.map((opinion) => {
-            const labelKey = AGENT_LABEL_KEY[opinion.agentName];
-            const label = labelKey ? text[labelKey] : opinion.agentName;
+            const label = getAgentLabel(opinion.agentName, text);
             return (
               <div key={opinion.agentName} className="text-sm">
                 <div className="flex items-center justify-between">
@@ -97,7 +102,9 @@ export const MultiAgentInsights: React.FC<MultiAgentInsightsProps> = ({ insights
             <div className="text-xs font-semibold text-green-600 mb-2">{text.bullishPointsTitle}</div>
             <ul className="list-disc list-inside space-y-1 text-sm">
               {bullishPoints.map((point, idx) => (
-                <li key={idx}>{point.text}</li>
+                <li key={idx}>
+                  {point.text} <span className="text-muted-text">({getAgentLabel(point.sourceAgent, text)})</span>
+                </li>
               ))}
             </ul>
           </div>
@@ -105,7 +112,9 @@ export const MultiAgentInsights: React.FC<MultiAgentInsightsProps> = ({ insights
             <div className="text-xs font-semibold text-red-600 mb-2">{text.bearishPointsTitle}</div>
             <ul className="list-disc list-inside space-y-1 text-sm">
               {bearishPoints.map((point, idx) => (
-                <li key={idx}>{point.text}</li>
+                <li key={idx}>
+                  {point.text} <span className="text-muted-text">({getAgentLabel(point.sourceAgent, text)})</span>
+                </li>
               ))}
             </ul>
           </div>

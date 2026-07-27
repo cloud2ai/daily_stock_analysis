@@ -28,6 +28,12 @@ describe('MultiAgentInsights', () => {
     expect(screen.getByText('关税压力')).toBeInTheDocument();
     expect(screen.getByText('看多')).toBeInTheDocument();
     expect(screen.getByText('看空')).toBeInTheDocument();
+
+    // Every bullish/bearish point must be attributed to its source agent, not shown anonymously.
+    const bullishItem = screen.getByText('政策支持').closest('li');
+    const bearishItem = screen.getByText('关税压力').closest('li');
+    expect(bullishItem).toHaveTextContent('宏观政策');
+    expect(bearishItem).toHaveTextContent('宏观政策');
   });
 
   it('renders English labels when language is en', () => {
@@ -52,7 +58,7 @@ describe('MultiAgentInsights', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('renders bullish column even when bearishPoints is empty, and vice versa', () => {
+  it('renders bullish column even when bearishPoints is empty', () => {
     render(
       <MultiAgentInsights
         insights={{ ...baseInsights, bearishPoints: [] }}
@@ -60,5 +66,47 @@ describe('MultiAgentInsights', () => {
       />,
     );
     expect(screen.getByText('政策支持')).toBeInTheDocument();
+    expect(screen.queryByText('关税压力')).not.toBeInTheDocument();
+  });
+
+  it('renders bearish column even when bullishPoints is empty', () => {
+    render(
+      <MultiAgentInsights
+        insights={{ ...baseInsights, bullishPoints: [] }}
+        language="zh"
+      />,
+    );
+    expect(screen.getByText('关税压力')).toBeInTheDocument();
+    expect(screen.queryByText('政策支持')).not.toBeInTheDocument();
+  });
+
+  it('renders the signal attribution stacked bar with correct widths and tooltip labels', () => {
+    const { container } = render(<MultiAgentInsights insights={baseInsights} language="zh" />);
+
+    expect(screen.getByText('权重占比')).toBeInTheDocument();
+
+    const segments = container.querySelectorAll('[title$="%"]');
+    expect(segments).toHaveLength(4);
+
+    const titles = Array.from(segments).map((segment) => segment.getAttribute('title'));
+    expect(titles).toEqual([
+      '技术面: 35%',
+      '个股消息面: 20%',
+      '风险面: 25%',
+      '宏观政策: 20%',
+    ]);
+
+    const widths = Array.from(segments).map((segment) => (segment as HTMLElement).style.width);
+    expect(widths).toEqual(['35%', '20%', '25%', '20%']);
+  });
+
+  it('does not render the signal attribution bar when signalAttribution is absent', () => {
+    render(
+      <MultiAgentInsights
+        insights={{ ...baseInsights, signalAttribution: undefined }}
+        language="zh"
+      />,
+    );
+    expect(screen.queryByText('权重占比')).not.toBeInTheDocument();
   });
 });
