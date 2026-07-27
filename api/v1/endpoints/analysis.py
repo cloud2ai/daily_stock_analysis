@@ -1332,6 +1332,7 @@ def _build_analysis_report(
     summary_data = report_data.get("summary", {})
     strategy_data = report_data.get("strategy", {})
     details_data = report_data.get("details", {})
+    multi_agent_insights_data = report_data.get("multi_agent_insights")
     report_language = normalize_report_language(
         meta_data.get("report_language")
         or (context_snapshot or {}).get("report_language")
@@ -1486,5 +1487,6 @@ def _build_analysis_report(
         meta=meta,
         summary=summary,
         strategy=strategy,
-        details=details
+        details=details,
+        multi_agent_insights=multi_agent_insights_data,
     )

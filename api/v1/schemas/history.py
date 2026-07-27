@@ -170,6 +170,43 @@ class ReportStrategy(BaseModel):
     take_profit: Optional[str] = Field(None, description="止盈价")
 
 
+class MultiAgentOpinionItem(BaseModel):
+    """单个 Agent 的意见"""
+
+    agent_name: str = Field(..., description="Agent 名称，如 technical/intel/macro_intel/risk")
+    signal: str = Field(..., description="信号：strong_buy/buy/hold/sell/strong_sell")
+    confidence: float = Field(..., description="置信度 0.0-1.0")
+    reasoning: str = Field("", description="该 Agent 的推理摘要")
+    raw_data: Optional[Dict[str, Any]] = Field(None, description="该 Agent 输出的原始数据")
+
+
+class MultiAgentPointItem(BaseModel):
+    """聚合后的看多/看空条目"""
+
+    text: str = Field(..., description="条目文本")
+    source_agent: str = Field(..., description="来源 Agent 名称")
+
+
+class MultiAgentSignalAttribution(BaseModel):
+    """信号权重归因"""
+
+    technical_indicators: Optional[float] = Field(None, description="技术面权重(%)")
+    news_sentiment: Optional[float] = Field(None, description="消息面权重(%)")
+    fundamentals: Optional[float] = Field(None, description="基本面权重(%)")
+    market_conditions: Optional[float] = Field(None, description="市场环境权重(%)")
+    strongest_bullish_signal: Optional[str] = Field(None, description="最强看多信号")
+    strongest_bearish_signal: Optional[str] = Field(None, description="最强看空信号")
+
+
+class MultiAgentInsights(BaseModel):
+    """多 Agent 意见汇总（技术面/个股消息面/宏观政策/风险面等）"""
+
+    opinions: List[MultiAgentOpinionItem] = Field(default_factory=list, description="各 Agent 的独立意见")
+    bullish_points: List[MultiAgentPointItem] = Field(default_factory=list, description="聚合看多条目")
+    bearish_points: List[MultiAgentPointItem] = Field(default_factory=list, description="聚合看空条目")
+    signal_attribution: Optional[MultiAgentSignalAttribution] = Field(None, description="信号权重归因")
+
+
 class AnalysisContextPackOverviewSubject(BaseModel):
     """AnalysisContextPack 可见摘要标的信息"""
 
@@ -293,6 +330,7 @@ class AnalysisReport(BaseModel):
     summary: ReportSummary = Field(..., description="概览区")
     strategy: Optional[ReportStrategy] = Field(None, description="策略点位区")
     details: Optional[ReportDetails] = Field(None, description="详情区")
+    multi_agent_insights: Optional[MultiAgentInsights] = Field(None, description="多 Agent 意见汇总")
 
     model_config = ConfigDict(json_schema_extra={
         "example": {
