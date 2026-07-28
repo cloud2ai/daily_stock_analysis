@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [文档] 新增 `docs/agent-orchestrator-pipeline.md`，梳理从查询到评分的完整 Agent 编排流程，覆盖四种编排模式（quick/standard/full/specialist）、策略（skill）选择机制与 MacroIntelAgent 的关系、DecisionAgent 权重语义边界。
 - [新功能] 新增 `docker/docker-compose.newsgrab.yml` 叠加文件，用 Docker Compose `include:` 一键联合启动 newsgrab（Google News 采集服务）与 DSA 容器，自动接入共享内部网络并覆盖 `GOOGLE_NEWS_COLLECTOR_URL` 为容器内部地址，无需手动发布端口或配置代理；详见 `docs/newsgrab-integration.md`。
 - [修复] `MultiAgentInsights.tsx` 的权重占比色条改用 `flex`（原 `Tooltip` 默认 `inline-flex`），修复真实浏览器下色块完全不渲染的问题；同时把 `dashboard["agent_opinions"]` 镜像写入 `_finalize_dashboard_payload` 产生的嵌套 `dashboard["dashboard"]` 结构，修复该字段被"嵌套 dashboard 解包"逻辑丢弃、导致真实分析页面看不到多方观点数据的问题（涉及 `orchestrator.py`、`pipeline.py`、`history.py`、`analysis.py` 多处报告构建路径）。
 - [新功能] 新增 `MacroIntelAgent`，在 `full` 模式的多 Agent 分析流程中新增一个多地区（中日韩新美欧）宏观政策/产业链/正反面消息面专家，意见与技术面/个股消息面/风险一起交给 DecisionAgent 综合裁决（权重指导调整为技术35%/个股消息面20%/宏观20%/风险25%）；依赖新增的 `search_macro_news` 工具与已扩展的 `search_google_news` 采集链路（collector-service 支持按请求指定语言/地区）。
