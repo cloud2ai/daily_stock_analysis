@@ -1,0 +1,41 @@
+# ===================================
+# 可选叠加文件：联合启动 newsgrab（Google News 采集服务）
+# ===================================
+#
+# 这个文件不改变 docker-compose.yml 的默认行为——不叠加此文件时，
+# DSA 完全按原来的方式运行（不配置也可运行）。叠加后，会额外拉起
+# newsgrab 的 playwright-service + collector-service，并把 DSA 的
+# server/analyzer 接入同一个内部网络，直接通过容器名访问
+# collector-service，不需要对外发布端口、不需要手动配置代理。
+#
+# 前置条件：newsgrab 项目已作为“兄弟目录”clone 到本仓库同级目录，即：
+#   some-dir/
+#     daily_stock_analysis/   <- 本仓库
+#     newsgrab/                <- https://github.com/<org>/newsgrab
+# 如果 newsgrab 放在别的位置，在 .env 里设置 NEWSGRAB_COMPOSE_PATH
+# 指向它的 docker-compose.yml 绝对/相对路径即可。
+#
+# 用法：
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.newsgrab.yml up -d server
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.newsgrab.yml up -d analyzer server
+#
+# 停止：
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.newsgrab.yml down
+
+include:
+  - path: ${NEWSGRAB_COMPOSE_PATH:-../../newsgrab/docker-compose.yml}
+
+services:
+  server:
+    networks:
+      - default
+      - newsgrab-internal
+    environment:
+      - GOOGLE_NEWS_COLLECTOR_URL=http://collector-service:8000
+
+  analyzer:
+    networks:
+      - default
+      - newsgrab-internal
+    environment:
+      - GOOGLE_NEWS_COLLECTOR_URL=http://collector-service:8000
