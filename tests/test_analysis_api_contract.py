@@ -1087,6 +1087,69 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         self.assertEqual(result.result.report["meta"]["current_price"], 1234.5)
         self.assertEqual(result.result.report["meta"]["change_pct"], 0.0)
 
+    def test_get_analysis_status_completed_db_snapshot_forwards_multi_agent_insights(self) -> None:
+        """Regression test for a real gap found via a live full-mode run:
+        this DB-snapshot completion path built AnalysisReport without
+        extracting multi_agent_insights from raw_result["dashboard"], unlike
+        the synchronous /analyze endpoint's _build_analysis_report. The web
+        UI polls this exact endpoint after submitting an async analyze
+        request, so this silently hid the whole multi-agent insights panel
+        for every real analysis triggered from the page."""
+        if get_analysis_status is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        mock_queue = MagicMock()
+        mock_queue.get_task.return_value = None
+        mock_db = MagicMock()
+        mock_db.get_analysis_history.return_value = [
+            SimpleNamespace(
+                id=1,
+                code="600019",
+                name="宝钢股份",
+                report_type="full",
+                raw_result={
+                    "report_language": "zh",
+                    "model_used": "test-model",
+                    "dashboard": {
+                        "agent_opinions": [
+                            {"agent_name": "technical", "signal": "buy", "confidence": 0.72, "reasoning": "MA金叉", "raw_data": {}},
+                            {"agent_name": "macro_intel", "signal": "hold", "confidence": 0.6, "reasoning": "宏观缺乏强催化", "raw_data": {"bullish_points": ["政策支持"], "bearish_points": ["关税压力"]}},
+                        ],
+                        "signal_attribution": {
+                            "technical_indicators": 35,
+                            "news_sentiment": 20,
+                            "fundamentals": 20,
+                            "market_conditions": 25,
+                            "strongest_bullish_signal": "多头排列",
+                            "strongest_bearish_signal": "关税压力",
+                        },
+                    },
+                },
+                context_snapshot=None,
+                sentiment_score=62,
+                operation_advice="持有观察",
+                trend_prediction="短期震荡偏多",
+                analysis_summary="summary",
+                ideal_buy=None,
+                secondary_buy=None,
+                stop_loss=None,
+                take_profit=None,
+                created_at=None,
+            )
+        ]
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=mock_queue), \
+             patch("src.storage.DatabaseManager.get_instance", return_value=mock_db):
+            result = get_analysis_status("task-mai-1")
+
+        mai = result.result.report["multi_agent_insights"]
+        self.assertIsNotNone(mai)
+        self.assertEqual(len(mai["opinions"]), 2)
+        self.assertEqual(mai["opinions"][0]["agent_name"], "technical")
+        bullish_sources = [p["source_agent"] for p in mai["bullish_points"]]
+        self.assertIn("macro_intel", bullish_sources)
+        self.assertEqual(mai["signal_attribution"]["strongest_bullish_signal"], "多头排列")
+
     def test_get_analysis_status_returns_market_review_report_from_db(self) -> None:
         if get_analysis_status is None:
             self.skipTest("analysis endpoint helpers unavailable in this environment")

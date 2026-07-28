@@ -27,6 +27,7 @@ from api.v1.schemas.history import (
     ReportSummary,
     ReportStrategy,
     ReportDetails,
+    MultiAgentInsights,
     MarkdownReportResponse,
     RunDiagnosticSummaryResponse,
     StockBarItem,
@@ -580,12 +581,42 @@ def get_history_detail(
             concept_rankings=extracted_boards.get("concept_rankings"),
             market_structure=market_structure,
         )
-        
+
+        # multi_agent_insights lives inside raw_result["dashboard"] (see
+        # AnalysisResult.get_agent_opinions/get_bullish_bearish_points in
+        # src/analyzer.py). Build a minimal AnalysisResult shell so history
+        # detail responses forward the same field the synchronous /analyze
+        # endpoint already does (api/v1/endpoints/analysis.py's
+        # _build_analysis_report), instead of always returning None here.
+        from src.analyzer import AnalysisResult
+
+        insights_shell = AnalysisResult(
+            code=result.get("stock_code", ""),
+            name=stock_name,
+            sentiment_score=raw_result.get("sentiment_score", 50),
+            trend_prediction=raw_result.get("trend_prediction", ""),
+            operation_advice=raw_result.get("operation_advice", ""),
+            dashboard=raw_result.get("dashboard"),
+        )
+        bullish_bearish = insights_shell.get_bullish_bearish_points()
+        insights_dashboard = raw_result.get("dashboard")
+        multi_agent_insights = MultiAgentInsights(
+            opinions=insights_shell.get_agent_opinions(),
+            bullish_points=bullish_bearish.get("bullish", []),
+            bearish_points=bullish_bearish.get("bearish", []),
+            signal_attribution=(
+                insights_dashboard.get("signal_attribution")
+                if isinstance(insights_dashboard, dict)
+                else None
+            ),
+        )
+
         return AnalysisReport(
             meta=meta,
             summary=summary,
             strategy=strategy,
-            details=details
+            details=details,
+            multi_agent_insights=multi_agent_insights,
         )
         
     except HTTPException:

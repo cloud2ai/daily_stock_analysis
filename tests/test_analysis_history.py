@@ -1213,6 +1213,58 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         self.assertIsInstance(detail.get("raw_result"), dict)
         self.assertIsNone(detail.get("model_used"))
 
+    def test_history_detail_forwards_multi_agent_insights(self) -> None:
+        """Regression test for a real gap found via a live full-mode run:
+        GET /api/v1/history/{id} previously always returned
+        multi_agent_insights=None because get_history_detail built
+        AnalysisReport without extracting it from the persisted
+        raw_result["dashboard"], unlike the synchronous /analyze endpoint's
+        _build_analysis_report (which does). The web report page loads a
+        just-created analysis through this exact endpoint, so this silently
+        hid the whole multi-agent insights panel on the actual page."""
+        if get_history_detail is None:
+            self.skipTest("get_history_detail not importable in this environment")
+
+        result = self._build_result()
+        result.dashboard = {
+            "agent_opinions": [
+                {"agent_name": "technical", "signal": "buy", "confidence": 0.72, "reasoning": "MA金叉", "raw_data": {}},
+                {"agent_name": "intel", "signal": "hold", "confidence": 0.55, "reasoning": "消息面中性", "raw_data": {"positive_catalysts": ["低估值"], "risk_alerts": ["行业承压"]}},
+            ],
+            "signal_attribution": {
+                "technical_indicators": 40,
+                "news_sentiment": 22,
+                "fundamentals": 20,
+                "market_conditions": 18,
+                "strongest_bullish_signal": "多头排列",
+                "strongest_bearish_signal": "行业承压",
+            },
+        }
+
+        saved = self.db.save_analysis_history(
+            result=result,
+            query_id="query_mai_001",
+            report_type="full",
+            news_content="新闻摘要",
+            context_snapshot=None,
+            save_snapshot=False,
+        )
+        self.assertGreater(saved, 0)
+
+        report = get_history_detail(str(saved), db_manager=self.db)
+
+        self.assertIsNotNone(report.multi_agent_insights)
+        opinions = report.multi_agent_insights.opinions
+        self.assertEqual(len(opinions), 2)
+        self.assertEqual(opinions[0].agent_name, "technical")
+        bullish = report.multi_agent_insights.bullish_points
+        self.assertEqual(len(bullish), 1)
+        self.assertEqual(bullish[0].source_agent, "intel")
+        self.assertEqual(
+            report.multi_agent_insights.signal_attribution.strongest_bullish_signal,
+            "多头排列",
+        )
+
     def test_history_detail_prefers_raw_sniper_strings(self) -> None:
         """History detail should display the original sniper point strings from raw_result."""
         result = self._build_result()
