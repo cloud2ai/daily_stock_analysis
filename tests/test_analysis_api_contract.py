@@ -1087,6 +1087,69 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         self.assertEqual(result.result.report["meta"]["current_price"], 1234.5)
         self.assertEqual(result.result.report["meta"]["change_pct"], 0.0)
 
+    def test_get_analysis_status_completed_db_snapshot_forwards_multi_agent_insights(self) -> None:
+        """Regression test for a real gap found via a live full-mode run:
+        this DB-snapshot completion path built AnalysisReport without
+        extracting multi_agent_insights from raw_result["dashboard"], unlike
+        the synchronous /analyze endpoint's _build_analysis_report. The web
+        UI polls this exact endpoint after submitting an async analyze
+        request, so this silently hid the whole multi-agent insights panel
+        for every real analysis triggered from the page."""
+        if get_analysis_status is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        mock_queue = MagicMock()
+        mock_queue.get_task.return_value = None
+        mock_db = MagicMock()
+        mock_db.get_analysis_history.return_value = [
+            SimpleNamespace(
+                id=1,
+                code="600019",
+                name="宝钢股份",
+                report_type="full",
+                raw_result={
+                    "report_language": "zh",
+                    "model_used": "test-model",
+                    "dashboard": {
+                        "agent_opinions": [
+                            {"agent_name": "technical", "signal": "buy", "confidence": 0.72, "reasoning": "MA金叉", "raw_data": {}},
+                            {"agent_name": "macro_intel", "signal": "hold", "confidence": 0.6, "reasoning": "宏观缺乏强催化", "raw_data": {"bullish_points": ["政策支持"], "bearish_points": ["关税压力"]}},
+                        ],
+                        "signal_attribution": {
+                            "technical_indicators": 35,
+                            "news_sentiment": 20,
+                            "fundamentals": 20,
+                            "market_conditions": 25,
+                            "strongest_bullish_signal": "多头排列",
+                            "strongest_bearish_signal": "关税压力",
+                        },
+                    },
+                },
+                context_snapshot=None,
+                sentiment_score=62,
+                operation_advice="持有观察",
+                trend_prediction="短期震荡偏多",
+                analysis_summary="summary",
+                ideal_buy=None,
+                secondary_buy=None,
+                stop_loss=None,
+                take_profit=None,
+                created_at=None,
+            )
+        ]
+
+        with patch("api.v1.endpoints.analysis.get_task_queue", return_value=mock_queue), \
+             patch("src.storage.DatabaseManager.get_instance", return_value=mock_db):
+            result = get_analysis_status("task-mai-1")
+
+        mai = result.result.report["multi_agent_insights"]
+        self.assertIsNotNone(mai)
+        self.assertEqual(len(mai["opinions"]), 2)
+        self.assertEqual(mai["opinions"][0]["agent_name"], "technical")
+        bullish_sources = [p["source_agent"] for p in mai["bullish_points"]]
+        self.assertIn("macro_intel", bullish_sources)
+        self.assertEqual(mai["signal_attribution"]["strongest_bullish_signal"], "多头排列")
+
     def test_get_analysis_status_returns_market_review_report_from_db(self) -> None:
         if get_analysis_status is None:
             self.skipTest("analysis endpoint helpers unavailable in this environment")
@@ -1797,6 +1860,105 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         self.assertIsNone(report.strategy.secondary_buy)
         self.assertEqual(report.strategy.stop_loss, "9.5")
         self.assertEqual(report.strategy.take_profit, "11.6")
+
+    def test_build_analysis_report_forwards_multi_agent_insights(self) -> None:
+        if _build_analysis_report is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        multi_agent_insights = {
+            "opinions": [
+                {
+                    "agent_name": "technical",
+                    "signal": "buy",
+                    "confidence": 0.8,
+                    "reasoning": "均线多头排列",
+                    "raw_data": {"macd": "golden_cross"},
+                },
+                {
+                    "agent_name": "macro_intel",
+                    "signal": "hold",
+                    "confidence": 0.5,
+                    "reasoning": "宏观政策中性",
+                    "raw_data": None,
+                },
+            ],
+            "bullish_points": [
+                {"text": "均线多头排列", "source_agent": "technical"},
+            ],
+            "bearish_points": [
+                {"text": "估值偏高", "source_agent": "risk"},
+            ],
+            "signal_attribution": {
+                "technical_indicators": 40.0,
+                "news_sentiment": 20.0,
+                "fundamentals": 25.0,
+                "market_conditions": 15.0,
+                "strongest_bullish_signal": "均线多头排列",
+                "strongest_bearish_signal": "估值偏高",
+            },
+        }
+
+        report = _build_analysis_report(
+            report_data={
+                "meta": {},
+                "summary": {},
+                "strategy": {},
+                "details": {},
+                "multi_agent_insights": multi_agent_insights,
+            },
+            query_id="q1",
+            stock_code="600519",
+            stock_name="贵州茅台",
+            context_snapshot=None,
+            fallback_fundamental_payload=None,
+        )
+
+        self.assertIsNotNone(report.multi_agent_insights)
+        self.assertEqual(len(report.multi_agent_insights.opinions), 2)
+        self.assertEqual(report.multi_agent_insights.opinions[0].agent_name, "technical")
+        self.assertEqual(report.multi_agent_insights.opinions[0].signal, "buy")
+        self.assertEqual(report.multi_agent_insights.opinions[0].confidence, 0.8)
+        self.assertEqual(report.multi_agent_insights.opinions[0].reasoning, "均线多头排列")
+        self.assertEqual(report.multi_agent_insights.opinions[0].raw_data, {"macd": "golden_cross"})
+        self.assertEqual(report.multi_agent_insights.opinions[1].agent_name, "macro_intel")
+        self.assertIsNone(report.multi_agent_insights.opinions[1].raw_data)
+        self.assertEqual(len(report.multi_agent_insights.bullish_points), 1)
+        self.assertEqual(report.multi_agent_insights.bullish_points[0].text, "均线多头排列")
+        self.assertEqual(report.multi_agent_insights.bullish_points[0].source_agent, "technical")
+        self.assertEqual(len(report.multi_agent_insights.bearish_points), 1)
+        self.assertEqual(report.multi_agent_insights.bearish_points[0].text, "估值偏高")
+        self.assertEqual(report.multi_agent_insights.bearish_points[0].source_agent, "risk")
+        self.assertIsNotNone(report.multi_agent_insights.signal_attribution)
+        self.assertEqual(report.multi_agent_insights.signal_attribution.technical_indicators, 40.0)
+        self.assertEqual(report.multi_agent_insights.signal_attribution.news_sentiment, 20.0)
+        self.assertEqual(report.multi_agent_insights.signal_attribution.fundamentals, 25.0)
+        self.assertEqual(report.multi_agent_insights.signal_attribution.market_conditions, 15.0)
+        self.assertEqual(
+            report.multi_agent_insights.signal_attribution.strongest_bullish_signal, "均线多头排列"
+        )
+        self.assertEqual(
+            report.multi_agent_insights.signal_attribution.strongest_bearish_signal, "估值偏高"
+        )
+
+    def test_build_analysis_report_multi_agent_insights_defaults_to_none_when_absent(self) -> None:
+        if _build_analysis_report is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        report = _build_analysis_report(
+            report_data={
+                "meta": {},
+                "summary": {},
+                "strategy": {},
+                "details": {},
+            },
+            query_id="q1",
+            stock_code="600519",
+            stock_name="贵州茅台",
+            context_snapshot=None,
+            fallback_fundamental_payload=None,
+        )
+
+        self.assertIsNone(report.multi_agent_insights)
 
     def test_build_analysis_report_extracts_related_board_fields_from_snapshot(self) -> None:
         if _build_analysis_report is None:

@@ -699,6 +699,48 @@ class TestAgentResultConversion(unittest.TestCase):
         self.assertEqual(result.dashboard["phase_decision"]["phase_context"]["phase"], "intraday")
         self.assertEqual(result.dashboard["phase_decision"]["watch_conditions"], ["放量突破"])
 
+    def test_convert_preserves_top_level_agent_opinions_with_nested_dashboard(self):
+        """Regression test for a real production bug found via a live full-mode
+        run (600019/宝钢股份): AgentOrchestrator.run() adds `agent_opinions` to
+        the outer AgentResult.dashboard dict, but this conversion prefers the
+        inner dashboard["dashboard"] sub-object (`nested_dashboard or dash`)
+        whenever the agent's own JSON output nests one -- silently dropping
+        agent_opinions from the AnalysisResult that get_agent_opinions()/
+        get_bullish_bearish_points()/the web report actually read from. Same
+        problem class already handled here for phase_decision above."""
+        pipeline = self._make_pipeline()
+
+        from src.agent.executor import AgentResult
+        from src.enums import ReportType
+
+        dashboard = {
+            "stock_name": "贵州茅台",
+            "sentiment_score": 80,
+            "trend_prediction": "看多",
+            "operation_advice": "持有",
+            "decision_type": "hold",
+            "confidence_level": "中",
+            "agent_opinions": [
+                {"agent_name": "technical", "signal": "buy", "confidence": 0.7, "reasoning": "MA金叉", "raw_data": {}},
+            ],
+            "dashboard": {"core_conclusion": {"one_sentence": "看好"}},
+            "analysis_summary": "Testing",
+        }
+
+        agent_result = AgentResult(
+            success=True,
+            content=json.dumps(dashboard),
+            dashboard=dashboard,
+            provider="gemini",
+        )
+
+        result = pipeline._agent_result_to_analysis_result(
+            agent_result, "600519", "贵州茅台", ReportType.SIMPLE, "q-agent-opinions"
+        )
+
+        self.assertEqual(result.dashboard["agent_opinions"][0]["agent_name"], "technical")
+        self.assertEqual(result.dashboard["agent_opinions"][0]["signal"], "buy")
+
     def test_convert_failed_dashboard(self):
         """Failed AgentResult should produce a minimal AnalysisResult."""
         pipeline = self._make_pipeline()

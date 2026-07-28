@@ -52,6 +52,7 @@ from api.v1.schemas.history import (
     ReportSummary,
     ReportStrategy,
     ReportDetails,
+    MultiAgentInsights,
 )
 from api.v1.schemas.run_flow import RunFlowSnapshot
 from data_provider.base import canonical_stock_code, normalize_stock_code
@@ -1195,6 +1196,35 @@ def get_analysis_status(task_id: str) -> TaskStatus:
                 align_with_score=True,
             )
 
+            # multi_agent_insights lives inside raw_result["dashboard"] (see
+            # AnalysisResult.get_agent_opinions/get_bullish_bearish_points in
+            # src/analyzer.py). This task-status path builds the report
+            # straight from the DB record rather than through
+            # analysis_service.py's _build_analysis_response, so it needs
+            # its own AnalysisResult shell to forward the same field.
+            from src.analyzer import AnalysisResult as _AnalysisResultShell
+
+            insights_shell = _AnalysisResultShell(
+                code=display_stock_code,
+                name=stock_name,
+                sentiment_score=record.sentiment_score if record.sentiment_score is not None else 50,
+                trend_prediction=record.trend_prediction or "",
+                operation_advice=record.operation_advice or "",
+                dashboard=raw_dict.get("dashboard"),
+            )
+            insights_bullish_bearish = insights_shell.get_bullish_bearish_points()
+            insights_dashboard = raw_dict.get("dashboard")
+            multi_agent_insights = MultiAgentInsights(
+                opinions=insights_shell.get_agent_opinions(),
+                bullish_points=insights_bullish_bearish.get("bullish", []),
+                bearish_points=insights_bullish_bearish.get("bearish", []),
+                signal_attribution=(
+                    insights_dashboard.get("signal_attribution")
+                    if isinstance(insights_dashboard, dict)
+                    else None
+                ),
+            )
+
             # Build report from DB record so completed tasks return real data
             report_dict = AnalysisReport(
                 meta=ReportMeta(
@@ -1225,6 +1255,7 @@ def get_analysis_status(task_id: str) -> TaskStatus:
                     take_profit=_stringify_report_strategy_value(getattr(record, 'take_profit', None)),
                 ),
                 details=details,
+                multi_agent_insights=multi_agent_insights,
             ).model_dump()
             return TaskStatus(
                 task_id=task_id,
@@ -1332,6 +1363,7 @@ def _build_analysis_report(
     summary_data = report_data.get("summary", {})
     strategy_data = report_data.get("strategy", {})
     details_data = report_data.get("details", {})
+    multi_agent_insights_data = report_data.get("multi_agent_insights")
     report_language = normalize_report_language(
         meta_data.get("report_language")
         or (context_snapshot or {}).get("report_language")
@@ -1486,5 +1518,6 @@ def _build_analysis_report(
         meta=meta,
         summary=summary,
         strategy=strategy,
-        details=details
+        details=details,
+        multi_agent_insights=multi_agent_insights_data,
     )

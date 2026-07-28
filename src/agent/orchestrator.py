@@ -155,6 +155,7 @@ class AgentOrchestrator:
             ("technical", "agent_technical_agent_timeout_s"),
             ("intel", "agent_intel_agent_timeout_s"),
             ("risk", "agent_risk_agent_timeout_s"),
+            ("macro_intel", "agent_macro_intel_agent_timeout_s"),
             ("decision", "agent_decision_agent_timeout_s"),
             ("portfolio", "agent_portfolio_agent_timeout_s"),
             ("skill", "agent_skill_agent_timeout_s"),
@@ -360,10 +361,43 @@ class AgentOrchestrator:
         ctx.meta["response_mode"] = "dashboard"
         orch_result = self._execute_pipeline(ctx, parse_dashboard=True)
 
+        dashboard = orch_result.dashboard
+        if isinstance(dashboard, dict):
+            agent_opinions_payload = [
+                {
+                    "agent_name": op.agent_name,
+                    "signal": op.signal,
+                    "confidence": op.confidence,
+                    "reasoning": op.reasoning,
+                    # When a risk override is applied, _finalize_dashboard_payload
+                    # reassigns the decision opinion's raw_data to the same
+                    # `payload` dict that becomes this dashboard (see the
+                    # `if risk_applied:` block there), so op.raw_data can alias
+                    # the dashboard being mutated right now. Storing it verbatim
+                    # would create a self-referencing structure that
+                    # json.dumps/deepcopy cannot handle downstream (API
+                    # responses, report builders).
+                    "raw_data": {} if op.raw_data is dashboard else op.raw_data,
+                }
+                for op in ctx.opinions
+            ]
+            dashboard["agent_opinions"] = agent_opinions_payload
+            # _finalize_dashboard_payload always nests a display-facing dashboard
+            # under dashboard["dashboard"] (see dashboard_block there), and
+            # src/core/pipeline.py::_agent_result_to_analysis_result prefers
+            # that nested block over this outer one when building the
+            # AnalysisResult that the rest of the app (get_agent_opinions,
+            # get_bullish_bearish_points, the web report) actually reads from.
+            # Mirror agent_opinions into the nested block too so it survives
+            # that layer preference instead of being silently dropped.
+            nested_dashboard = dashboard.get("dashboard")
+            if isinstance(nested_dashboard, dict):
+                nested_dashboard["agent_opinions"] = agent_opinions_payload
+
         return AgentResult(
             success=orch_result.success,
             content=orch_result.content,
-            dashboard=orch_result.dashboard,
+            dashboard=dashboard,
             tool_calls_log=orch_result.tool_calls_log,
             total_steps=orch_result.total_steps,
             total_tokens=orch_result.total_tokens,
@@ -766,6 +800,7 @@ class AgentOrchestrator:
         """Instantiate the ordered agent list based on ``self.mode``."""
         from src.agent.agents.technical_agent import TechnicalAgent
         from src.agent.agents.intel_agent import IntelAgent
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
         from src.agent.agents.decision_agent import DecisionAgent
         from src.agent.agents.risk_agent import RiskAgent
 
@@ -780,6 +815,7 @@ class AgentOrchestrator:
 
         technical = self._prepare_agent(TechnicalAgent(**common_kwargs))
         intel = self._prepare_agent(IntelAgent(**common_kwargs))
+        macro_intel = self._prepare_agent(MacroIntelAgent(**common_kwargs))
         risk = self._prepare_agent(RiskAgent(**common_kwargs))
         decision = self._prepare_agent(DecisionAgent(**common_kwargs))
 
@@ -788,7 +824,7 @@ class AgentOrchestrator:
         elif self.mode == "standard":
             return [technical, intel, decision]
         elif self.mode == "full":
-            return [technical, intel, risk, decision]
+            return [technical, intel, macro_intel, risk, decision]
         elif self.mode == "specialist":
             # Specialist agents are inserted lazily right before the decision
             # stage so the router can see the finished technical opinion.

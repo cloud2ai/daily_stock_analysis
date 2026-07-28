@@ -1,0 +1,138 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import { MultiAgentInsights } from '../MultiAgentInsights';
+import type { MultiAgentInsights as MultiAgentInsightsData } from '../../../types/analysis';
+
+const baseInsights: MultiAgentInsightsData = {
+  opinions: [
+    { agentName: 'technical', signal: 'buy', confidence: 0.72, reasoning: 'MA金叉' },
+    { agentName: 'macro_intel', signal: 'hold', confidence: 0.6, reasoning: '宏观缺乏强催化' },
+  ],
+  bullishPoints: [{ text: '政策支持', sourceAgent: 'macro_intel' }],
+  bearishPoints: [{ text: '关税压力', sourceAgent: 'macro_intel' }],
+  signalAttribution: {
+    technicalIndicators: 35,
+    newsSentiment: 20,
+    fundamentals: 25,
+    marketConditions: 20,
+  },
+};
+
+describe('MultiAgentInsights', () => {
+  it('renders agent opinions, bullish/bearish points, and signal attribution', () => {
+    render(<MultiAgentInsights insights={baseInsights} language="zh" />);
+
+    expect(screen.getByText('多方观点')).toBeInTheDocument();
+    expect(screen.getByText('MA金叉')).toBeInTheDocument();
+    expect(screen.getByText('政策支持')).toBeInTheDocument();
+    expect(screen.getByText('关税压力')).toBeInTheDocument();
+    expect(screen.getByText('看多')).toBeInTheDocument();
+    expect(screen.getByText('看空')).toBeInTheDocument();
+
+    // Every bullish/bearish point must be attributed to its source agent, not shown anonymously.
+    const bullishItem = screen.getByText('政策支持').closest('li');
+    const bearishItem = screen.getByText('关税压力').closest('li');
+    expect(bullishItem).toHaveTextContent('宏观政策');
+    expect(bearishItem).toHaveTextContent('宏观政策');
+  });
+
+  it('renders English labels when language is en', () => {
+    render(<MultiAgentInsights insights={baseInsights} language="en" />);
+    expect(screen.getByText('Multi-Agent Views')).toBeInTheDocument();
+    expect(screen.getByText('Bullish')).toBeInTheDocument();
+    expect(screen.getByText('Bearish')).toBeInTheDocument();
+  });
+
+  it('returns null when insights is undefined', () => {
+    const { container } = render(<MultiAgentInsights insights={undefined} language="zh" />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('returns null when opinions, bullishPoints, and bearishPoints are all empty', () => {
+    const { container } = render(
+      <MultiAgentInsights
+        insights={{ opinions: [], bullishPoints: [], bearishPoints: [] }}
+        language="zh"
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('renders bullish column even when bearishPoints is empty', () => {
+    render(
+      <MultiAgentInsights
+        insights={{ ...baseInsights, bearishPoints: [] }}
+        language="zh"
+      />,
+    );
+    expect(screen.getByText('政策支持')).toBeInTheDocument();
+    expect(screen.queryByText('关税压力')).not.toBeInTheDocument();
+  });
+
+  it('renders bearish column even when bullishPoints is empty', () => {
+    render(
+      <MultiAgentInsights
+        insights={{ ...baseInsights, bullishPoints: [] }}
+        language="zh"
+      />,
+    );
+    expect(screen.getByText('关税压力')).toBeInTheDocument();
+    expect(screen.queryByText('政策支持')).not.toBeInTheDocument();
+  });
+
+  it('renders the signal attribution stacked bar with correct widths and tooltip labels', () => {
+    const { container } = render(<MultiAgentInsights insights={baseInsights} language="zh" />);
+
+    expect(screen.getByText('权重占比')).toBeInTheDocument();
+
+    const bar = container.querySelector('.flex.h-2.w-full.overflow-hidden.rounded-full');
+    expect(bar).not.toBeNull();
+
+    const segments = Array.from(bar!.children) as HTMLElement[];
+    expect(segments).toHaveLength(4);
+
+    // Segment widths must be preserved on the outer wrapper even though the
+    // hover text now comes from the shared Tooltip component instead of a
+    // native title attribute.
+    const widths = segments.map((segment) => segment.style.width);
+    expect(widths).toEqual(['35%', '20%', '25%', '20%']);
+
+    const expectedTooltipLabels = [
+      '技术面: 35%',
+      '个股消息面: 20%',
+      '风险面: 25%',
+      '宏观政策: 20%',
+    ];
+
+    segments.forEach((segment, index) => {
+      const trigger = segment.firstElementChild as HTMLElement;
+      expect(trigger).not.toBeNull();
+
+      // Regression guard: found via a real browser render that Tooltip's
+      // default `inline-flex` trigger silently fails to paint any
+      // background color for a percentage-sized child nested this deep
+      // (confirmed empirically -- every computed style reported correct
+      // values, but the actual pixels stayed the page background color;
+      // switching to `flex` fixed it). jsdom has no real layout/paint
+      // engine so it cannot catch the visual bug itself, but this locks in
+      // the specific class the fix relies on.
+      expect(trigger.className).toContain('flex');
+      expect(trigger.className).not.toContain('inline-flex');
+
+      fireEvent.mouseEnter(trigger);
+      expect(screen.getByText(expectedTooltipLabels[index])).toBeInTheDocument();
+      fireEvent.mouseLeave(trigger);
+      expect(screen.queryByText(expectedTooltipLabels[index])).not.toBeInTheDocument();
+    });
+  });
+
+  it('does not render the signal attribution bar when signalAttribution is absent', () => {
+    render(
+      <MultiAgentInsights
+        insights={{ ...baseInsights, signalAttribution: undefined }}
+        language="zh"
+      />,
+    );
+    expect(screen.queryByText('权重占比')).not.toBeInTheDocument();
+  });
+});

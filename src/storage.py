@@ -13,6 +13,7 @@ A股自选股智能分析系统 - 存储层
 
 import atexit
 from contextlib import contextmanager
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import logging
@@ -2887,6 +2888,12 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         try:
             return datetime.fromisoformat(text)
         except ValueError:
+            pass
+
+        # RFC 822 / RFC 2822 格式（如 Google News: "Fri, 24 Jul 2026 12:00:53 GMT"）
+        try:
+            return parsedate_to_datetime(text)
+        except (TypeError, ValueError):
             pass
 
         for fmt in (

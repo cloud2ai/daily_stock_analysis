@@ -927,6 +927,69 @@ class TestIntelAgentPostProcess(unittest.TestCase):
         self.assertEqual(ctx.risk_flags[0]["description"], "股东减持")
 
 
+class TestMacroIntelAgentPostProcess(unittest.TestCase):
+    """Test MacroIntelAgent JSON parsing and opinion construction."""
+
+    def test_parses_json_into_agent_opinion(self):
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
+
+        agent = MacroIntelAgent(tool_registry=MagicMock(), llm_adapter=MagicMock())
+        ctx = AgentContext(query="test", stock_code="600019")
+        raw = """```json
+        {
+          "signal": "buy",
+          "confidence": 0.65,
+          "reasoning": "中日韩产业链政策整体偏正面，未见重大风险",
+          "regions_covered": ["CN", "JP", "KR"],
+          "policy_notes": ["中国钢铁行业去产能政策延续"],
+          "industry_chain_notes": ["日韩上游原材料价格企稳"],
+          "bullish_points": ["政策支持"],
+          "bearish_points": []
+        }
+        ```"""
+
+        opinion = agent.post_process(ctx, raw)
+
+        self.assertIsNotNone(opinion)
+        self.assertEqual(opinion.agent_name, "macro_intel")
+        self.assertEqual(opinion.signal, "buy")
+        self.assertAlmostEqual(opinion.confidence, 0.65)
+        self.assertEqual(ctx.get_data("macro_intel_opinion")["regions_covered"], ["CN", "JP", "KR"])
+
+    def test_returns_none_on_unparseable_json(self):
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
+
+        agent = MacroIntelAgent(tool_registry=MagicMock(), llm_adapter=MagicMock())
+        ctx = AgentContext(query="test", stock_code="600019")
+
+        opinion = agent.post_process(ctx, "not valid json at all")
+
+        self.assertIsNone(opinion)
+
+    def test_agent_configuration(self):
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
+
+        agent = MacroIntelAgent(tool_registry=MagicMock(), llm_adapter=MagicMock())
+
+        self.assertEqual(agent.agent_name, "macro_intel")
+        self.assertEqual(agent.max_steps, 6)
+        self.assertEqual(agent.tool_names, ["search_macro_news"])
+
+    def test_tool_names_resolve_against_the_real_production_registry(self):
+        """Regression guard for the wiring-gap bug class: tool_names is a
+        plain string list that must actually match a real registered tool
+        name, or _filtered_registry() fails soft (logs a warning, returns an
+        empty registry) and the agent silently runs with zero tools. Uses
+        the real factory-built registry, not a mock, so a future rename on
+        either side would be caught here."""
+        from src.agent.agents.macro_intel_agent import MacroIntelAgent
+        from src.agent.factory import get_tool_registry
+
+        agent = MacroIntelAgent(tool_registry=get_tool_registry(), llm_adapter=MagicMock())
+
+        self.assertEqual(agent._filtered_registry().list_names(), ["search_macro_news"])
+
+
 # ============================================================
 # AgentOrchestrator (with mocked sub-agents)
 # ============================================================
@@ -963,7 +1026,7 @@ class TestOrchestratorModes(unittest.TestCase):
         ctx = AgentContext(query="test", stock_code="600519")
         chain = orch._build_agent_chain(ctx)
         names = [a.agent_name for a in chain]
-        self.assertEqual(names, ["technical", "intel", "risk", "decision"])
+        self.assertEqual(names, ["technical", "intel", "macro_intel", "risk", "decision"])
 
     def test_invalid_mode_falls_back_to_standard(self):
         orch = self._make_orchestrator("nonsense")
@@ -976,21 +1039,27 @@ class TestOrchestratorModes(unittest.TestCase):
         high_limit_chain = orch._build_agent_chain(AgentContext(query="test", stock_code="600519"))
         self.assertEqual(
             {agent.agent_name: agent.max_steps for agent in high_limit_chain},
-            {"technical": 6, "intel": 4, "risk": 4, "decision": 3},
+            {"technical": 6, "intel": 4, "macro_intel": 6, "risk": 4, "decision": 3},
         )
 
         orch.max_steps = 5
         low_limit_chain = orch._build_agent_chain(AgentContext(query="test", stock_code="600519"))
         self.assertEqual(
             {agent.agent_name: agent.max_steps for agent in low_limit_chain},
-            {"technical": 5, "intel": 4, "risk": 4, "decision": 3},
+            {"technical": 5, "intel": 4, "macro_intel": 5, "risk": 4, "decision": 3},
         )
 
         orch.max_steps = AGENT_MAX_STEPS_DEFAULT + 2
         raised_limit_chain = orch._build_agent_chain(AgentContext(query="test", stock_code="600519"))
         self.assertEqual(
             {agent.agent_name: agent.max_steps for agent in raised_limit_chain},
-            {"technical": AGENT_MAX_STEPS_DEFAULT + 2, "intel": AGENT_MAX_STEPS_DEFAULT + 2, "risk": AGENT_MAX_STEPS_DEFAULT + 2, "decision": AGENT_MAX_STEPS_DEFAULT + 2},
+            {
+                "technical": AGENT_MAX_STEPS_DEFAULT + 2,
+                "intel": AGENT_MAX_STEPS_DEFAULT + 2,
+                "macro_intel": AGENT_MAX_STEPS_DEFAULT + 2,
+                "risk": AGENT_MAX_STEPS_DEFAULT + 2,
+                "decision": AGENT_MAX_STEPS_DEFAULT + 2,
+            },
         )
 
     def test_prepare_agent_raised_limit_overrides_low_default_agent(self):
@@ -2125,6 +2194,187 @@ class TestOrchestratorExecution(unittest.TestCase):
         self.assertEqual(result.content, "final answer")
         build_specialist_agents.assert_called_once()
         strategy.run.assert_called_once()
+
+    def test_run_serializes_ctx_opinions_into_dashboard_agent_opinions(self):
+        from src.agent.orchestrator import AgentOrchestrator
+        from src.agent.protocols import AgentOpinion
+
+        orch = AgentOrchestrator(
+            tool_registry=MagicMock(),
+            llm_adapter=MagicMock(),
+            mode="full",
+        )
+
+        fake_opinions = [
+            AgentOpinion(agent_name="technical", signal="buy", confidence=0.72, reasoning="MA金叉"),
+            AgentOpinion(agent_name="intel", signal="hold", confidence=0.55, reasoning="消息面中性"),
+            AgentOpinion(agent_name="macro_intel", signal="hold", confidence=0.60, reasoning="宏观缺乏强催化"),
+        ]
+
+        def fake_execute_pipeline(ctx, parse_dashboard=True):
+            from src.agent.orchestrator import OrchestratorResult
+            ctx.opinions.extend(fake_opinions)
+            return OrchestratorResult(
+                success=True,
+                content="{}",
+                dashboard={"core_conclusion": {"one_sentence": "test"}},
+                tool_calls_log=[],
+                total_steps=1,
+                total_tokens=0,
+                provider="test",
+                model="test",
+                error=None,
+                runtime_facts=None,
+            )
+
+        with patch.object(orch, "_execute_pipeline", side_effect=fake_execute_pipeline):
+            result = orch.run("analyze this stock", context={"stock_code": "600019", "stock_name": "宝钢股份"})
+
+        assert result.dashboard is not None
+        assert result.dashboard["agent_opinions"] == [
+            {"agent_name": "technical", "signal": "buy", "confidence": 0.72, "reasoning": "MA金叉", "raw_data": {}},
+            {"agent_name": "intel", "signal": "hold", "confidence": 0.55, "reasoning": "消息面中性", "raw_data": {}},
+            {"agent_name": "macro_intel", "signal": "hold", "confidence": 0.60, "reasoning": "宏观缺乏强催化", "raw_data": {}},
+        ]
+        # core_conclusion (an existing dashboard field) must survive untouched
+        assert result.dashboard["core_conclusion"]["one_sentence"] == "test"
+
+    def test_run_mirrors_agent_opinions_into_nested_dashboard_block(self):
+        """Regression test for a real production bug found via a live full-mode
+        run (600019/宝钢股份): _finalize_dashboard_payload always nests a
+        display-facing dashboard under dashboard["dashboard"], and
+        src/core/pipeline.py::_agent_result_to_analysis_result prefers that
+        nested block (`nested_dashboard or dash`) over this outer one when
+        building the AnalysisResult the rest of the app actually reads from.
+        Without mirroring, agent_opinions written only to the outer dict is
+        silently lost the moment a real dashboard has this nested shape --
+        which every full/multi-agent run produces. This test fails if run()
+        stops mirroring into the nested block."""
+        from src.agent.orchestrator import AgentOrchestrator
+        from src.agent.protocols import AgentOpinion
+
+        orch = AgentOrchestrator(
+            tool_registry=MagicMock(),
+            llm_adapter=MagicMock(),
+            mode="full",
+        )
+
+        fake_opinions = [
+            AgentOpinion(agent_name="technical", signal="buy", confidence=0.72, reasoning="MA金叉"),
+        ]
+
+        def fake_execute_pipeline(ctx, parse_dashboard=True):
+            from src.agent.orchestrator import OrchestratorResult
+            ctx.opinions.extend(fake_opinions)
+            return OrchestratorResult(
+                success=True,
+                content="{}",
+                dashboard={
+                    "decision_type": "buy",
+                    # The nested shape _finalize_dashboard_payload always produces.
+                    "dashboard": {"core_conclusion": {"one_sentence": "test"}},
+                },
+                tool_calls_log=[],
+                total_steps=1,
+                total_tokens=0,
+                provider="test",
+                model="test",
+                error=None,
+                runtime_facts=None,
+            )
+
+        with patch.object(orch, "_execute_pipeline", side_effect=fake_execute_pipeline):
+            result = orch.run("analyze this stock", context={"stock_code": "600019", "stock_name": "宝钢股份"})
+
+        # Outer copy (existing behavior, direct AgentResult consumers/tests).
+        assert result.dashboard["agent_opinions"][0]["agent_name"] == "technical"
+        # Nested copy: this is what src/core/pipeline.py's
+        # `nested_dashboard or dash` actually picks for AnalysisResult.dashboard.
+        assert result.dashboard["dashboard"]["agent_opinions"][0]["agent_name"] == "technical"
+        assert result.dashboard["dashboard"]["core_conclusion"]["one_sentence"] == "test"
+
+    def test_run_breaks_self_reference_when_risk_override_makes_decision_opinion_alias_the_dashboard(self):
+        """Regression test for a real crash hit during a live full-mode run
+        (600019/宝钢股份, real LLM + real collector-service):
+        json.dumps(dashboard['agent_opinions']) raised "ValueError: Circular
+        reference detected".
+
+        Root cause: when a risk override is applied,
+        `_finalize_dashboard_payload` (orchestrator.py, inside the
+        `if risk_applied:` block) reassigns the decision opinion's
+        `raw_data` to `payload` -- the very same dict that becomes
+        `orch_result.dashboard`. `run()`'s later
+        `dashboard["agent_opinions"] = [...]` then stores that opinion's
+        raw_data verbatim, producing
+        `dashboard["agent_opinions"][i]["raw_data"] is dashboard`.
+
+        This drives the real `_finalize_dashboard_payload` method (via
+        ctx.meta["risk_override_application"]), not a synthetic
+        simplification, so the test still fails if that method's aliasing
+        behavior changes shape.
+        """
+        import json
+
+        from src.agent.orchestrator import AgentOrchestrator
+        from src.agent.protocols import AgentOpinion
+        from src.agent.risk_override import RiskOverrideApplication
+
+        orch = AgentOrchestrator(
+            tool_registry=MagicMock(),
+            llm_adapter=MagicMock(),
+            mode="full",
+        )
+
+        def fake_execute_pipeline(ctx, parse_dashboard=True):
+            from src.agent.orchestrator import OrchestratorResult
+
+            ctx.opinions.append(
+                AgentOpinion(agent_name="technical", signal="buy", confidence=0.72, reasoning="MA金叉")
+            )
+            ctx.opinions.append(
+                AgentOpinion(
+                    agent_name="decision", signal="hold", confidence=0.5,
+                    reasoning="综合判断", raw_data={"decision_type": "hold"},
+                )
+            )
+            ctx.meta["risk_override_application"] = RiskOverrideApplication(
+                evidence_present=True,
+                override_enabled=True,
+                trigger="risk_veto",
+                applied=True,
+                reason="risk_veto_applied",
+                post_risk_signal="hold",
+                from_signal="buy",
+                to_signal="hold",
+            )
+
+            dashboard = orch._finalize_dashboard_payload({"decision_type": "buy"}, ctx)
+            return OrchestratorResult(
+                success=True,
+                content="{}",
+                dashboard=dashboard,
+                tool_calls_log=[],
+                total_steps=1,
+                total_tokens=0,
+                provider="test",
+                model="test",
+                error=None,
+                runtime_facts=None,
+            )
+
+        with patch.object(orch, "_execute_pipeline", side_effect=fake_execute_pipeline):
+            result = orch.run("analyze this stock", context={"stock_code": "600019", "stock_name": "宝钢股份"})
+
+        assert result.dashboard is not None
+
+        # Must not raise "Circular reference detected".
+        json.dumps(result.dashboard, ensure_ascii=False)
+
+        opinions = result.dashboard["agent_opinions"]
+        by_name = {op["agent_name"]: op for op in opinions}
+        assert by_name["technical"]["raw_data"] == {}  # unrelated agent, untouched
+        assert by_name["decision"]["raw_data"] == {}  # self-reference replaced with {}
+        assert by_name["decision"]["signal"] == "hold"  # risk override's post_risk_signal survives
 
 
 class TestDecisionAgentChatMode(unittest.TestCase):

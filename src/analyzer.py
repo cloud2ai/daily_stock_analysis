@@ -1812,6 +1812,48 @@ class AnalysisResult:
             return self.dashboard['intelligence'].get('risk_alerts', [])
         return []
 
+    def get_agent_opinions(self) -> List[Dict[str, Any]]:
+        """获取多 Agent 各自的意见（signal/confidence/reasoning/raw_data）"""
+        if self.dashboard and 'agent_opinions' in self.dashboard:
+            return self.dashboard.get('agent_opinions') or []
+        return []
+
+    def get_bullish_bearish_points(self) -> Dict[str, List[Dict[str, str]]]:
+        """按固定映射表，从各 Agent 的 raw_data 里聚合看多/看空条目，每条带来源 Agent 标签"""
+        bullish: List[Dict[str, str]] = []
+        bearish: List[Dict[str, str]] = []
+
+        for opinion in self.get_agent_opinions():
+            agent_name = opinion.get('agent_name', '')
+            raw_data = opinion.get('raw_data') or {}
+            if not isinstance(raw_data, dict):
+                continue
+
+            if agent_name == 'intel':
+                for text in raw_data.get('positive_catalysts') or []:
+                    if isinstance(text, str) and text:
+                        bullish.append({"text": text, "source_agent": agent_name})
+                for text in raw_data.get('risk_alerts') or []:
+                    if isinstance(text, str) and text:
+                        bearish.append({"text": text, "source_agent": agent_name})
+            elif agent_name == 'macro_intel':
+                for text in raw_data.get('bullish_points') or []:
+                    if isinstance(text, str) and text:
+                        bullish.append({"text": text, "source_agent": agent_name})
+                for text in raw_data.get('bearish_points') or []:
+                    if isinstance(text, str) and text:
+                        bearish.append({"text": text, "source_agent": agent_name})
+            elif agent_name == 'risk':
+                flags = raw_data.get('flags')
+                if isinstance(flags, list):
+                    for flag in flags:
+                        if isinstance(flag, dict):
+                            description = flag.get('description')
+                            if isinstance(description, str) and description:
+                                bearish.append({"text": description, "source_agent": agent_name})
+
+        return {"bullish": bullish, "bearish": bearish}
+
     def get_emoji(self) -> str:
         """根据操作建议返回对应 emoji"""
         _, emoji, _ = get_signal_level(

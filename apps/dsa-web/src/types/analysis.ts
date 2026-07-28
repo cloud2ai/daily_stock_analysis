@@ -120,6 +120,34 @@ export interface ReportStrategy {
   takeProfit?: string;
 }
 
+export interface MultiAgentOpinion {
+  agentName: string;
+  signal: string;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface MultiAgentPoint {
+  text: string;
+  sourceAgent: string;
+}
+
+export interface SignalAttribution {
+  technicalIndicators?: number;
+  newsSentiment?: number;
+  fundamentals?: number;
+  marketConditions?: number;
+  strongestBullishSignal?: string;
+  strongestBearishSignal?: string;
+}
+
+export interface MultiAgentInsights {
+  opinions: MultiAgentOpinion[];
+  bullishPoints: MultiAgentPoint[];
+  bearishPoints: MultiAgentPoint[];
+  signalAttribution?: SignalAttribution | null;
+}
+
 export interface RelatedBoard {
   name: string;
   code?: string;
@@ -370,6 +398,7 @@ export interface AnalysisReport {
   summary: ReportSummary;
   strategy?: ReportStrategy;
   details?: ReportDetails;
+  multiAgentInsights?: MultiAgentInsights;
 }
 
 // ============ Analysis Result Types ============
