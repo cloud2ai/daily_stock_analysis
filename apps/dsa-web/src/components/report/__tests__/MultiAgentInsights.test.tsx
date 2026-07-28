@@ -108,6 +108,17 @@ describe('MultiAgentInsights', () => {
       const trigger = segment.firstElementChild as HTMLElement;
       expect(trigger).not.toBeNull();
 
+      // Regression guard: found via a real browser render that Tooltip's
+      // default `inline-flex` trigger silently fails to paint any
+      // background color for a percentage-sized child nested this deep
+      // (confirmed empirically -- every computed style reported correct
+      // values, but the actual pixels stayed the page background color;
+      // switching to `flex` fixed it). jsdom has no real layout/paint
+      // engine so it cannot catch the visual bug itself, but this locks in
+      // the specific class the fix relies on.
+      expect(trigger.className).toContain('flex');
+      expect(trigger.className).not.toContain('inline-flex');
+
       fireEvent.mouseEnter(trigger);
       expect(screen.getByText(expectedTooltipLabels[index])).toBeInTheDocument();
       fireEvent.mouseLeave(trigger);

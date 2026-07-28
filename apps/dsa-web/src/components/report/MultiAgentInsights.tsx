@@ -86,7 +86,14 @@ export const MultiAgentInsights: React.FC<MultiAgentInsightsProps> = ({ insights
               const value = signalAttribution[segment.key] ?? 0;
               return (
                 <div key={segment.key} style={{ width: `${value}%` }}>
-                  <Tooltip content={`${text[segment.labelKey]}: ${value}%`} className="h-full w-full">
+                  {/* Tooltip's trigger defaults to inline-flex; force `flex`
+                      here (twMerge drops the conflicting inline-flex) since
+                      inline-flex breaks percentage height/width resolution
+                      for its nested child in this specific block-level
+                      parent chain (reproduced in a real browser: the segment
+                      silently fails to paint any color despite every
+                      computed style reporting correct values). */}
+                  <Tooltip content={`${text[segment.labelKey]}: ${value}%`} className="flex h-full w-full">
                     <div className="h-full w-full" style={{ backgroundColor: segment.color }} />
                   </Tooltip>
                 </div>
