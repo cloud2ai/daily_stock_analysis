@@ -2239,6 +2239,60 @@ class TestOrchestratorExecution(unittest.TestCase):
         # core_conclusion (an existing dashboard field) must survive untouched
         assert result.dashboard["core_conclusion"]["one_sentence"] == "test"
 
+    def test_run_mirrors_agent_opinions_into_nested_dashboard_block(self):
+        """Regression test for a real production bug found via a live full-mode
+        run (600019/宝钢股份): _finalize_dashboard_payload always nests a
+        display-facing dashboard under dashboard["dashboard"], and
+        src/core/pipeline.py::_agent_result_to_analysis_result prefers that
+        nested block (`nested_dashboard or dash`) over this outer one when
+        building the AnalysisResult the rest of the app actually reads from.
+        Without mirroring, agent_opinions written only to the outer dict is
+        silently lost the moment a real dashboard has this nested shape --
+        which every full/multi-agent run produces. This test fails if run()
+        stops mirroring into the nested block."""
+        from src.agent.orchestrator import AgentOrchestrator
+        from src.agent.protocols import AgentOpinion
+
+        orch = AgentOrchestrator(
+            tool_registry=MagicMock(),
+            llm_adapter=MagicMock(),
+            mode="full",
+        )
+
+        fake_opinions = [
+            AgentOpinion(agent_name="technical", signal="buy", confidence=0.72, reasoning="MA金叉"),
+        ]
+
+        def fake_execute_pipeline(ctx, parse_dashboard=True):
+            from src.agent.orchestrator import OrchestratorResult
+            ctx.opinions.extend(fake_opinions)
+            return OrchestratorResult(
+                success=True,
+                content="{}",
+                dashboard={
+                    "decision_type": "buy",
+                    # The nested shape _finalize_dashboard_payload always produces.
+                    "dashboard": {"core_conclusion": {"one_sentence": "test"}},
+                },
+                tool_calls_log=[],
+                total_steps=1,
+                total_tokens=0,
+                provider="test",
+                model="test",
+                error=None,
+                runtime_facts=None,
+            )
+
+        with patch.object(orch, "_execute_pipeline", side_effect=fake_execute_pipeline):
+            result = orch.run("analyze this stock", context={"stock_code": "600019", "stock_name": "宝钢股份"})
+
+        # Outer copy (existing behavior, direct AgentResult consumers/tests).
+        assert result.dashboard["agent_opinions"][0]["agent_name"] == "technical"
+        # Nested copy: this is what src/core/pipeline.py's
+        # `nested_dashboard or dash` actually picks for AnalysisResult.dashboard.
+        assert result.dashboard["dashboard"]["agent_opinions"][0]["agent_name"] == "technical"
+        assert result.dashboard["dashboard"]["core_conclusion"]["one_sentence"] == "test"
+
     def test_run_breaks_self_reference_when_risk_override_makes_decision_opinion_alias_the_dashboard(self):
         """Regression test for a real crash hit during a live full-mode run
         (600019/宝钢股份, real LLM + real collector-service):

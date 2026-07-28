@@ -2047,9 +2047,20 @@ class StockAnalysisPipeline:
             else:
                 result.analysis_summary = self._summary_fallback_from_result(result, report_language)
             top_level_phase_decision = dash.get("phase_decision") if isinstance(dash, dict) else None
-            if isinstance(nested_dashboard, dict) and isinstance(top_level_phase_decision, dict):
-                nested_dashboard = dict(nested_dashboard)
-                nested_dashboard.setdefault("phase_decision", top_level_phase_decision)
+            top_level_agent_opinions = dash.get("agent_opinions") if isinstance(dash, dict) else None
+            if isinstance(nested_dashboard, dict):
+                if isinstance(top_level_phase_decision, dict) or isinstance(top_level_agent_opinions, list):
+                    nested_dashboard = dict(nested_dashboard)
+                if isinstance(top_level_phase_decision, dict):
+                    nested_dashboard.setdefault("phase_decision", top_level_phase_decision)
+                if isinstance(top_level_agent_opinions, list):
+                    # AgentOrchestrator.run() adds agent_opinions to the outer
+                    # dash dict; mirror it here too (belt-and-suspenders with
+                    # orchestrator.py's own mirror into dashboard["dashboard"])
+                    # so any future code path that builds this two-layer
+                    # shape without going through AgentOrchestrator.run() does
+                    # not silently lose it the same way phase_decision could.
+                    nested_dashboard.setdefault("agent_opinions", top_level_agent_opinions)
 
             # The AI returns a top-level dict that contains a nested 'dashboard' sub-key
             # with core_conclusion / battle_plan / intelligence.  AnalysisResult's helper

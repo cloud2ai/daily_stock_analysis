@@ -363,7 +363,7 @@ class AgentOrchestrator:
 
         dashboard = orch_result.dashboard
         if isinstance(dashboard, dict):
-            dashboard["agent_opinions"] = [
+            agent_opinions_payload = [
                 {
                     "agent_name": op.agent_name,
                     "signal": op.signal,
@@ -381,6 +381,18 @@ class AgentOrchestrator:
                 }
                 for op in ctx.opinions
             ]
+            dashboard["agent_opinions"] = agent_opinions_payload
+            # _finalize_dashboard_payload always nests a display-facing dashboard
+            # under dashboard["dashboard"] (see dashboard_block there), and
+            # src/core/pipeline.py::_agent_result_to_analysis_result prefers
+            # that nested block over this outer one when building the
+            # AnalysisResult that the rest of the app (get_agent_opinions,
+            # get_bullish_bearish_points, the web report) actually reads from.
+            # Mirror agent_opinions into the nested block too so it survives
+            # that layer preference instead of being silently dropped.
+            nested_dashboard = dashboard.get("dashboard")
+            if isinstance(nested_dashboard, dict):
+                nested_dashboard["agent_opinions"] = agent_opinions_payload
 
         return AgentResult(
             success=orch_result.success,
