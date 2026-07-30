@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 新增 DSA v2 阶段 0B NewsGrab 前向归档研究原型：复用既有 collector 端点，将每次采集结果以不可覆盖文件、时间戳、错误记录和 SHA-256 保存为未来 PIT 回放证据；不改变实时 Agent 分析或默认交易规则。
 - [文档] 新增 `docs/agent-orchestrator-pipeline.md`，梳理从查询到评分的完整 Agent 编排流程，覆盖四种编排模式（quick/standard/full/specialist）、策略（skill）选择机制与 MacroIntelAgent 的关系、DecisionAgent 权重语义边界。
 - [新功能] 新增 `docker/docker-compose.newsgrab.yml` 叠加文件，用 Docker Compose `include:` 一键联合启动 newsgrab（Google News 采集服务）与 DSA 容器，自动接入共享内部网络并覆盖 `GOOGLE_NEWS_COLLECTOR_URL` 为容器内部地址，无需手动发布端口或配置代理；详见 `docs/newsgrab-integration.md`。
 - [修复] `MultiAgentInsights.tsx` 的权重占比色条改用 `flex`（原 `Tooltip` 默认 `inline-flex`），修复真实浏览器下色块完全不渲染的问题；同时把 `dashboard["agent_opinions"]` 镜像写入 `_finalize_dashboard_payload` 产生的嵌套 `dashboard["dashboard"]` 结构，修复该字段被"嵌套 dashboard 解包"逻辑丢弃、导致真实分析页面看不到多方观点数据的问题（涉及 `orchestrator.py`、`pipeline.py`、`history.py`、`analysis.py` 多处报告构建路径）。
