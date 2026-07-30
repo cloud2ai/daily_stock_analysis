@@ -20,14 +20,19 @@ presented as an exact cash/share ledger or formal post-cost evaluation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, datetime, time
 import math
 import statistics
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Dict, Iterable, List, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 import pandas as pd
+
+if TYPE_CHECKING:
+    from research.prototype.phase2.corporate_action_ledger import CorporateActionLedgerRecord
+    from research.prototype.phase2.corporate_actions import ResolvedCorporateAction
 
 
 V0_1_ANNUAL_TRADING_DAYS = 242
@@ -59,6 +64,15 @@ class PortfolioDailyTargetWeights:
 
     signal_date: date
     target_weights: Mapping[str, float]
+
+
+@dataclass(frozen=True)
+class VariableUniversePortfolioDailyTargetWeights:
+    """A target that may use a different eligible stock universe each day."""
+
+    signal_date: date
+    target_weights: Mapping[str, float]
+    eligible_symbols: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -134,6 +148,7 @@ class PortfolioDailyNavRecord:
     account_value: float
     nav: float
     daily_return: Optional[float]
+    dividend_receivable: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -170,6 +185,7 @@ class PortfolioTargetPositionBacktestResult:
     daily_nav: List[PortfolioDailyNavRecord]
     metrics: BacktestMetrics
     assumptions: BacktestAssumptions
+    corporate_action_records: List["CorporateActionLedgerRecord"] = field(default_factory=list)
 
 
 def run_target_position_backtest(
@@ -334,6 +350,274 @@ def run_portfolio_target_position_backtest(
         trades=trades,
         daily_nav=nav_records,
         metrics=_calculate_metrics(nav_records, assumptions),
+        assumptions=assumptions,
+    )
+
+
+def run_variable_universe_portfolio_target_position_backtest(
+    *,
+    bars_by_symbol: Mapping[str, Sequence[DailyBar]],
+    target_weights: Sequence[VariableUniversePortfolioDailyTargetWeights],
+    assumptions: BacktestAssumptions,
+    corporate_actions_by_symbol: Optional[Mapping[str, Sequence["ResolvedCorporateAction"]]] = None,
+    decision_cutoff_time: time = time(15, 0),
+    timezone_name: str = "Asia/Shanghai",
+) -> PortfolioTargetPositionBacktestResult:
+    """Run the existing shared-cash accounting over a changing eligible universe.
+
+    A symbol that leaves a target's eligible universe has an implicit zero
+    target.  It is therefore reduced before the opening buys for that target,
+    while prices are only required for symbols actually held or targeted on a
+    session.  This avoids forcing later-listed stocks into earlier sessions.
+    """
+
+    if not bars_by_symbol:
+        raise ValueError("bars_by_symbol must not be empty")
+    if not target_weights:
+        raise ValueError("target_weights must not be empty")
+    symbols = tuple(sorted(bars_by_symbol))
+    if any(not symbol.strip() for symbol in symbols):
+        raise ValueError("symbols must not be blank")
+    action_map = dict(corporate_actions_by_symbol or {})
+    if not set(action_map).issubset(symbols):
+        raise ValueError("corporate actions must have supplied bars")
+    from research.prototype.phase2.corporate_action_ledger import (
+        apply_close_corporate_actions,
+        apply_open_corporate_actions,
+    )
+    from research.prototype.phase2.corporate_actions import visible_actions_as_of
+    cutoff_zone = ZoneInfo(timezone_name)
+
+    ordered_bars: Dict[str, List[DailyBar]] = {}
+    for symbol in symbols:
+        bars = bars_by_symbol[symbol]
+        if not bars:
+            raise ValueError(f"bars must not be empty for {symbol}")
+        ordered_bars[symbol] = _validate_variable_universe_bars(bars=bars)
+    bars_by_date = {symbol: {bar.date: bar for bar in bars} for symbol, bars in ordered_bars.items()}
+    session_dates = sorted(set().union(*(set(rows) for rows in bars_by_date.values())))
+    session_set = set(session_dates)
+
+    signal_dates = [target.signal_date for target in target_weights]
+    if len(set(signal_dates)) != len(signal_dates):
+        raise ValueError("target_weights must not contain duplicate signal dates")
+    for target in target_weights:
+        if target.signal_date not in session_set:
+            raise ValueError(f"signal date {target.signal_date} is absent from supplied bars")
+        if not set(target.target_weights).issubset(target.eligible_symbols):
+            raise ValueError("target weights must be limited to eligible symbols")
+        if not target.eligible_symbols.issubset(set(symbols)):
+            raise ValueError("eligible symbols must have supplied bars")
+        if sum(target.target_weights.values()) > 1.0 + 1e-9:
+            raise ValueError("portfolio target weights must not exceed 1.0 in total")
+        for weight in target.target_weights.values():
+            if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
+                raise ValueError("portfolio target weights must be finite ratios from 0 to 1")
+
+    calendar = xcals.get_calendar("XSHG")
+    targets_by_execution_date: Dict[date, VariableUniversePortfolioDailyTargetWeights] = {}
+    for target in target_weights:
+        execution_date = calendar.next_session(pd.Timestamp(target.signal_date)).date()
+        if execution_date not in session_set:
+            raise ValueError(
+                f"no supplied bar for next trading session {execution_date} after signal {target.signal_date}"
+            )
+        targets_by_execution_date[execution_date] = target
+
+    cash = assumptions.initial_cash
+    positions = {symbol: 0 for symbol in symbols}
+    trades: List[TradeRecord] = []
+    nav_records: List[PortfolioDailyNavRecord] = []
+    previous_account_value: Optional[float] = None
+    receivables = {symbol: 0.0 for symbol in symbols}
+    receivables_by_action = {symbol: {} for symbol in symbols}
+    opened_action_ids = {symbol: frozenset() for symbol in symbols}
+    corporate_action_records: List["CorporateActionLedgerRecord"] = []
+
+    for session_date in session_dates:
+        for symbol in symbols:
+            visible_actions = visible_actions_as_of(
+                action_map.get(symbol, ()),
+                as_of=session_date,
+                decision_cutoff=datetime.combine(session_date, decision_cutoff_time, cutoff_zone),
+            )
+            opened = apply_open_corporate_actions(
+                event_date=session_date, symbol=symbol, shares=positions[symbol], cash=cash,
+                dividend_receivable=receivables[symbol], actions=visible_actions,
+                record_date_positions={action.action_id: positions[symbol] for action in visible_actions},
+                receivables_by_action_id=receivables_by_action[symbol], opened_action_ids=opened_action_ids[symbol],
+            )
+            positions[symbol] = opened.shares
+            receivables[symbol] = opened.dividend_receivable
+            receivables_by_action[symbol] = dict(opened.receivables_by_action_id)
+            opened_action_ids[symbol] = opened.opened_action_ids
+            corporate_action_records.extend(opened.records)
+        target = targets_by_execution_date.get(session_date)
+        if target is not None:
+            active_symbols = {
+                symbol
+                for symbol, shares in positions.items()
+                if shares > 0
+            } | set(target.target_weights)
+            missing_open = sorted(
+                symbol for symbol in active_symbols if session_date not in bars_by_date[symbol]
+            )
+            if missing_open:
+                raise ValueError(f"missing execution bar on {session_date}: {missing_open}")
+            open_equity = cash + sum(
+                positions[symbol] * bars_by_date[symbol][session_date].open
+                for symbol in active_symbols
+            )
+            desired_positions = {
+                symbol: (
+                    int((open_equity * target.target_weights.get(symbol, 0.0)) // bars_by_date[symbol][session_date].open)
+                    // assumptions.lot_size
+                ) * assumptions.lot_size
+                for symbol in active_symbols
+            }
+            for symbol in sorted(active_symbols):
+                if desired_positions[symbol] < positions[symbol]:
+                    trade = _execute_variable_universe_order(
+                        symbol=symbol,
+                        signal_date=target.signal_date,
+                        execution_date=session_date,
+                        target_weight=target.target_weights.get(symbol, 0.0),
+                        reference_price=bars_by_date[symbol][session_date].open,
+                        desired_shares=desired_positions[symbol],
+                        cash=cash,
+                        shares=positions[symbol],
+                        assumptions=assumptions,
+                        tradable=bars_by_date[symbol][session_date].volume > 0,
+                    )
+                    cash, positions[symbol] = trade.cash_after, trade.shares_after
+                    trades.append(trade)
+            for symbol in sorted(active_symbols):
+                if desired_positions[symbol] >= positions[symbol]:
+                    trade = _execute_variable_universe_order(
+                        symbol=symbol,
+                        signal_date=target.signal_date,
+                        execution_date=session_date,
+                        target_weight=target.target_weights.get(symbol, 0.0),
+                        reference_price=bars_by_date[symbol][session_date].open,
+                        desired_shares=desired_positions[symbol],
+                        cash=cash,
+                        shares=positions[symbol],
+                        assumptions=assumptions,
+                        tradable=bars_by_date[symbol][session_date].volume > 0,
+                    )
+                    cash, positions[symbol] = trade.cash_after, trade.shares_after
+                    trades.append(trade)
+
+        for symbol in symbols:
+            visible_actions = visible_actions_as_of(
+                action_map.get(symbol, ()),
+                as_of=session_date,
+                decision_cutoff=datetime.combine(session_date, decision_cutoff_time, cutoff_zone),
+            )
+            settled = apply_close_corporate_actions(
+                event_date=session_date, symbol=symbol, shares=positions[symbol], cash=cash,
+                dividend_receivable=receivables[symbol], actions=visible_actions,
+                receivables_by_action_id=receivables_by_action[symbol], opened_action_ids=opened_action_ids[symbol],
+            )
+            cash = settled.cash
+            receivables[symbol] = settled.dividend_receivable
+            receivables_by_action[symbol] = dict(settled.receivables_by_action_id)
+            corporate_action_records.extend(settled.records)
+        held_symbols = [symbol for symbol, shares in positions.items() if shares > 0]
+        missing_close = sorted(symbol for symbol in held_symbols if session_date not in bars_by_date[symbol])
+        if missing_close:
+            raise ValueError(f"missing close bar on {session_date}: {missing_close}")
+        market_value = sum(
+            positions[symbol] * bars_by_date[symbol][session_date].close
+            for symbol in held_symbols
+        )
+        total_receivable = sum(receivables.values())
+        account_value = cash + market_value + total_receivable
+        daily_return = None if previous_account_value is None else account_value / previous_account_value - 1.0
+        nav_records.append(
+            PortfolioDailyNavRecord(
+                date=session_date,
+                cash=cash,
+                positions=dict(positions),
+                market_value=market_value,
+                account_value=account_value,
+                nav=account_value / assumptions.initial_cash,
+                daily_return=daily_return,
+                dividend_receivable=total_receivable,
+            )
+        )
+        previous_account_value = account_value
+
+    return PortfolioTargetPositionBacktestResult(
+        trades=trades,
+        daily_nav=nav_records,
+        metrics=_calculate_metrics(nav_records, assumptions),
+        assumptions=assumptions,
+        corporate_action_records=corporate_action_records,
+    )
+
+
+def _validate_variable_universe_bars(*, bars: Sequence[DailyBar]) -> List[DailyBar]:
+    """Accept zero-volume bars only for the stage-1A variable-universe path.
+
+    A zero-volume bar remains valid historical evidence for valuation, but it
+    is not tradable and is handled explicitly at the next-open order step.
+    The v0.1 single-symbol and fixed-universe contracts retain their stricter
+    positive-volume validation in ``_validate_inputs``.
+    """
+
+    ordered_bars = sorted(bars, key=lambda bar: bar.date)
+    if len({bar.date for bar in ordered_bars}) != len(ordered_bars):
+        raise ValueError("bars must not contain duplicate dates")
+    if list(bars) != ordered_bars:
+        raise ValueError("bars must be supplied in ascending date order")
+    calendar = xcals.get_calendar("XSHG")
+    for bar in ordered_bars:
+        if not calendar.is_session(pd.Timestamp(bar.date)):
+            raise ValueError(f"bar date {bar.date} is not an XSHG trading session")
+        for price in (bar.open, bar.high, bar.low, bar.close):
+            if not math.isfinite(price) or price <= 0:
+                raise ValueError(f"bar prices must be positive and finite on {bar.date}")
+        if not math.isfinite(bar.volume) or bar.volume < 0:
+            raise ValueError(f"bar volume must be non-negative and finite on {bar.date}")
+    return ordered_bars
+
+
+def _execute_variable_universe_order(
+    *,
+    symbol: str,
+    signal_date: date,
+    execution_date: date,
+    target_weight: float,
+    reference_price: float,
+    desired_shares: int,
+    cash: float,
+    shares: int,
+    assumptions: BacktestAssumptions,
+    tradable: bool,
+) -> TradeRecord:
+    """Retain an auditable unfilled order when a zero-volume bar cannot trade."""
+
+    if not tradable and desired_shares != shares:
+        return _no_trade_record(
+            symbol=symbol,
+            signal_date=signal_date,
+            execution_date=execution_date,
+            target_weight=target_weight,
+            reference_price=reference_price,
+            cash=cash,
+            shares=shares,
+            reason="non_tradable_volume_zero",
+        )
+    return _execute_desired_shares(
+        symbol=symbol,
+        signal_date=signal_date,
+        execution_date=execution_date,
+        target_weight=target_weight,
+        reference_price=reference_price,
+        desired_shares=desired_shares,
+        cash=cash,
+        shares=shares,
         assumptions=assumptions,
     )
 
