@@ -10,12 +10,63 @@ import statistics
 
 import pytest
 
+import src.core.target_position_backtest as target_backtest
+
 from src.core.target_position_backtest import (
     BacktestAssumptions,
     DailyBar,
     DailyTargetWeight,
     run_target_position_backtest,
 )
+
+
+def test_portfolio_rebalances_shared_cash_at_next_open() -> None:
+    assumptions = BacktestAssumptions(
+        initial_cash=10_000.0,
+        commission_rate=0.0,
+        minimum_commission=0.0,
+        stamp_duty_rate=0.0,
+        transfer_fee_rate=0.0,
+        slippage_rate=0.0,
+        annual_trading_days=242,
+        annual_risk_free_rate=0.0,
+        risk_free_rate_source="deterministic test fixture",
+        risk_free_rate_as_of=date(2024, 1, 2),
+    )
+    bars = {
+        "AAA": [
+            DailyBar(date(2024, 1, 2), 10.0, 10.0, 10.0, 10.0, 1_000),
+            DailyBar(date(2024, 1, 3), 10.0, 10.0, 10.0, 10.0, 1_000),
+            DailyBar(date(2024, 1, 4), 10.0, 10.0, 10.0, 10.0, 1_000),
+        ],
+        "BBB": [
+            DailyBar(date(2024, 1, 2), 10.0, 10.0, 10.0, 10.0, 1_000),
+            DailyBar(date(2024, 1, 3), 10.0, 10.0, 10.0, 10.0, 1_000),
+            DailyBar(date(2024, 1, 4), 10.0, 10.0, 10.0, 10.0, 1_000),
+        ],
+    }
+
+    result = target_backtest.run_portfolio_target_position_backtest(
+        bars_by_symbol=bars,
+        target_weights=[
+            target_backtest.PortfolioDailyTargetWeights(date(2024, 1, 2), {"AAA": 1.0, "BBB": 0.0}),
+            target_backtest.PortfolioDailyTargetWeights(date(2024, 1, 3), {"AAA": 0.0, "BBB": 1.0}),
+        ],
+        assumptions=assumptions,
+    )
+
+    executed = [
+        (trade.execution_date, trade.symbol, trade.side, trade.quantity)
+        for trade in result.trades
+        if trade.status == "filled"
+    ]
+    assert executed == [
+        (date(2024, 1, 3), "AAA", "buy", 1_000),
+        (date(2024, 1, 4), "AAA", "sell", 1_000),
+        (date(2024, 1, 4), "BBB", "buy", 1_000),
+    ]
+    assert result.daily_nav[-1].cash == pytest.approx(0.0)
+    assert result.daily_nav[-1].positions == {"AAA": 0, "BBB": 1_000}
 
 
 def test_buy_and_hold_uses_next_session_open_and_marks_nav_at_close() -> None:
