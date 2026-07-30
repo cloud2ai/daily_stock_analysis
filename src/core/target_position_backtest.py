@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import date
 import math
 import statistics
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
 import exchange_calendars as xcals
 import pandas as pd
@@ -51,6 +51,14 @@ class DailyTargetWeight:
 
     signal_date: date
     target_weight: float
+
+
+@dataclass(frozen=True)
+class PortfolioDailyTargetWeights:
+    """Portfolio weights known only after one shared signal-date close."""
+
+    signal_date: date
+    target_weights: Mapping[str, float]
 
 
 @dataclass(frozen=True)
@@ -116,6 +124,19 @@ class DailyNavRecord:
 
 
 @dataclass(frozen=True)
+class PortfolioDailyNavRecord:
+    """End-of-session shared-cash portfolio state."""
+
+    date: date
+    cash: float
+    positions: Mapping[str, int]
+    market_value: float
+    account_value: float
+    nav: float
+    daily_return: Optional[float]
+
+
+@dataclass(frozen=True)
 class BacktestMetrics:
     """Cost-after, absolute-return performance metrics."""
 
@@ -138,6 +159,16 @@ class TargetPositionBacktestResult(BacktestPath):
     """Strategy path with a same-accounting buy-and-hold comparison path."""
 
     benchmark: BacktestPath
+    assumptions: BacktestAssumptions
+
+
+@dataclass(frozen=True)
+class PortfolioTargetPositionBacktestResult:
+    """Auditable shared-cash portfolio execution result."""
+
+    trades: List[TradeRecord]
+    daily_nav: List[PortfolioDailyNavRecord]
+    metrics: BacktestMetrics
     assumptions: BacktestAssumptions
 
 
@@ -169,6 +200,140 @@ def run_target_position_backtest(
         daily_nav=strategy.daily_nav,
         metrics=strategy.metrics,
         benchmark=benchmark,
+        assumptions=assumptions,
+    )
+
+
+def run_portfolio_target_position_backtest(
+    *,
+    bars_by_symbol: Mapping[str, Sequence[DailyBar]],
+    target_weights: Sequence[PortfolioDailyTargetWeights],
+    assumptions: BacktestAssumptions,
+) -> PortfolioTargetPositionBacktestResult:
+    """Simulate frozen same-day portfolio targets with one shared cash ledger.
+
+    This is additive to the single-symbol v0.1 engine.  Every rebalance is
+    scheduled for the following XSHG session; reductions execute before buys
+    so released cash is available to the same opening batch.
+    """
+
+    if not bars_by_symbol:
+        raise ValueError("bars_by_symbol must not be empty")
+    if not target_weights:
+        raise ValueError("target_weights must not be empty")
+    symbols = tuple(sorted(bars_by_symbol))
+    if any(not symbol.strip() for symbol in symbols):
+        raise ValueError("symbols must not be blank")
+
+    ordered_bars: Dict[str, List[DailyBar]] = {}
+    target_dates = [target.signal_date for target in target_weights]
+    if len(set(target_dates)) != len(target_dates):
+        raise ValueError("target_weights must not contain duplicate signal dates")
+    for target in target_weights:
+        if set(target.target_weights) != set(symbols):
+            raise ValueError("each portfolio target must contain exactly the portfolio symbols")
+        if sum(target.target_weights.values()) > 1.0 + 1e-9:
+            raise ValueError("portfolio target weights must not exceed 1.0 in total")
+        for weight in target.target_weights.values():
+            if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
+                raise ValueError("portfolio target weights must be finite ratios from 0 to 1")
+    for symbol in symbols:
+        ordered_bars[symbol] = _validate_inputs(
+            bars=bars_by_symbol[symbol],
+            target_weights=[
+                DailyTargetWeight(signal_date=item.signal_date, target_weight=item.target_weights[symbol])
+                for item in target_weights
+            ],
+            assumptions=assumptions,
+        )
+
+    bars_by_date = {
+        symbol: {bar.date: bar for bar in bars}
+        for symbol, bars in ordered_bars.items()
+    }
+    common_dates = sorted(set.intersection(*(set(rows) for rows in bars_by_date.values())))
+    calendar = xcals.get_calendar("XSHG")
+    targets_by_execution_date: Dict[date, PortfolioDailyTargetWeights] = {}
+    for target in target_weights:
+        execution_date = calendar.next_session(pd.Timestamp(target.signal_date)).date()
+        if execution_date not in common_dates:
+            raise ValueError(
+                f"no completed shared bar for next trading session {execution_date} after signal {target.signal_date}"
+            )
+        targets_by_execution_date[execution_date] = target
+
+    cash = assumptions.initial_cash
+    positions = {symbol: 0 for symbol in symbols}
+    trades: List[TradeRecord] = []
+    nav_records: List[PortfolioDailyNavRecord] = []
+    previous_account_value: Optional[float] = None
+
+    for session_date in common_dates:
+        target = targets_by_execution_date.get(session_date)
+        if target is not None:
+            open_equity = cash + sum(
+                positions[symbol] * bars_by_date[symbol][session_date].open
+                for symbol in symbols
+            )
+            desired_positions = {
+                symbol: (int((open_equity * target.target_weights[symbol]) // bars_by_date[symbol][session_date].open)
+                         // assumptions.lot_size) * assumptions.lot_size
+                for symbol in symbols
+            }
+            for symbol in symbols:
+                if desired_positions[symbol] < positions[symbol]:
+                    trade = _execute_desired_shares(
+                        symbol=symbol,
+                        signal_date=target.signal_date,
+                        execution_date=session_date,
+                        target_weight=target.target_weights[symbol],
+                        reference_price=bars_by_date[symbol][session_date].open,
+                        desired_shares=desired_positions[symbol],
+                        cash=cash,
+                        shares=positions[symbol],
+                        assumptions=assumptions,
+                    )
+                    cash, positions[symbol] = trade.cash_after, trade.shares_after
+                    trades.append(trade)
+            for symbol in symbols:
+                if desired_positions[symbol] >= positions[symbol]:
+                    trade = _execute_desired_shares(
+                        symbol=symbol,
+                        signal_date=target.signal_date,
+                        execution_date=session_date,
+                        target_weight=target.target_weights[symbol],
+                        reference_price=bars_by_date[symbol][session_date].open,
+                        desired_shares=desired_positions[symbol],
+                        cash=cash,
+                        shares=positions[symbol],
+                        assumptions=assumptions,
+                    )
+                    cash, positions[symbol] = trade.cash_after, trade.shares_after
+                    trades.append(trade)
+
+        market_value = sum(
+            positions[symbol] * bars_by_date[symbol][session_date].close
+            for symbol in symbols
+        )
+        account_value = cash + market_value
+        daily_return = None if previous_account_value is None else account_value / previous_account_value - 1.0
+        nav_records.append(
+            PortfolioDailyNavRecord(
+                date=session_date,
+                cash=cash,
+                positions=dict(positions),
+                market_value=market_value,
+                account_value=account_value,
+                nav=account_value / assumptions.initial_cash,
+                daily_return=daily_return,
+            )
+        )
+        previous_account_value = account_value
+
+    return PortfolioTargetPositionBacktestResult(
+        trades=trades,
+        daily_nav=nav_records,
+        metrics=_calculate_metrics(nav_records, assumptions),
         assumptions=assumptions,
     )
 
@@ -300,6 +465,33 @@ def _rebalance_at_open(
     pre_trade_equity = cash + shares * reference_price
     desired_shares = int((pre_trade_equity * target_weight) // reference_price)
     desired_shares = (desired_shares // assumptions.lot_size) * assumptions.lot_size
+    return _execute_desired_shares(
+        symbol=symbol,
+        signal_date=signal_date,
+        execution_date=execution_date,
+        target_weight=target_weight,
+        reference_price=reference_price,
+        desired_shares=desired_shares,
+        cash=cash,
+        shares=shares,
+        assumptions=assumptions,
+    )
+
+
+def _execute_desired_shares(
+    *,
+    symbol: str,
+    signal_date: date,
+    execution_date: date,
+    target_weight: float,
+    reference_price: float,
+    desired_shares: int,
+    cash: float,
+    shares: int,
+    assumptions: BacktestAssumptions,
+) -> TradeRecord:
+    """Execute one desired share count using the v0.1 cost and lot arithmetic."""
+
     requested_quantity = abs(desired_shares - shares)
     if desired_shares == shares:
         return _no_trade_record(
